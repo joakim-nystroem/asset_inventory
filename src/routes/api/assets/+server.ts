@@ -15,7 +15,6 @@ const searchableColumns = [
   'serial_license'
 ];
 
-
 export const GET: RequestHandler = async ({ url }) => {
   const searchTerm = url.searchParams.get('q') || '';
 
@@ -24,10 +23,8 @@ export const GET: RequestHandler = async ({ url }) => {
     const params: string[] = [];
     
     if (searchTerm) {
-      // The search term is handled as one single string, as-is.
       const likeTerm = `%${searchTerm}%`;
       
-      // Check this ONE term against all specified columns
       const searchClauses = searchableColumns.map(col => `\`${col}\` LIKE ?`).join(' OR ');
       whereConditions.push(`(${searchClauses})`);
       
@@ -43,7 +40,7 @@ export const GET: RequestHandler = async ({ url }) => {
     
     const [rows] = await db.query(sql, params) as RowDataPacket[][];
     const assets = JSON.parse(JSON.stringify(rows));
-    
+
     return json({ assets });
 
   } catch (err: unknown) {

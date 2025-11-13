@@ -1,12 +1,18 @@
 import mysql from 'mysql2/promise';
-import { env } from '$env/dynamic/private';
+import { 
+  PRIVATE_DB_HOST, 
+  PRIVATE_DB_PORT, 
+  PRIVATE_DB_USER, 
+  PRIVATE_DB_NAME, 
+  PRIVATE_DB_PASSWORD 
+} from '$env/static/private';
 
 const pool = mysql.createPool({
-  host: env.PRIVATE_DB_HOST,
-  port: parseInt(env.PRIVATE_DB_PORT || '3306', 10),
-  user: env.PRIVATE_DB_USER,
-  password: env.PRIVATE_DB_PASSWORD,
-  database: env.PRIVATE_DB_NAME,
+  host: PRIVATE_DB_HOST,
+  port: parseInt(PRIVATE_DB_PORT || '3306', 10),
+  user: PRIVATE_DB_USER,
+  password: PRIVATE_DB_PASSWORD,
+  database: PRIVATE_DB_NAME,
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0

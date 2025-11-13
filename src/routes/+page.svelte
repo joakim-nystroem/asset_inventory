@@ -12,12 +12,14 @@
       assets = data.assets;
     } 
 
+    console.log(query)
+
     try {
       let response;
       if (query) {
-        response = await fetch(`/api/assets?q=${query}`);
+        response = await fetch(`./api/assets?q=${query}`);
       } else {
-        response = await fetch(`/api/assets`);
+        response = await fetch(`./api/assets`);
       }
 
       if (!response.ok) {
@@ -45,7 +47,7 @@
   <h2 class="text-lg font-bold">Asset Master</h2>
   <div class="flex gap-4 items-center ">
     <input 
-    class="bg-white dark:bg-neutral-100 p-1 border border-neutral-300 dark:border-none focus:outline-none" 
+    class="bg-white dark:bg-neutral-100 dark:text-neutral-700 p-1 border border-neutral-300 dark:border-none focus:outline-none" 
     placeholder="Search this list..." 
     bind:value={searchTerm}
     onkeydown={(e) => {if(e.key==='Enter')searchDatabase(searchTerm)}}

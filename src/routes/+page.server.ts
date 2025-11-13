@@ -5,7 +5,7 @@ export const load: PageServerLoad = async ({ fetch }) => {
   let dbError: string | null = null;
   
   try {
-    const response = await fetch(`/api/assets`);
+    const response = await fetch(`./api/assets`);
 
     if (!response.ok) {
       const err = await response.json();
