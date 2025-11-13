@@ -35,7 +35,7 @@
 		</button>
   </header>
   
-  <div class="p-4">
+  <div class="px-4 py-2">
     {@render children?.()}
   </div>
 </div>
