@@ -18,26 +18,46 @@ const searchableColumns = [
 
 export const GET: RequestHandler = async ({ url }) => {
 	const searchTerm = url.searchParams.get('q') || '';
+	const filterParams = url.searchParams.getAll('filter');
 
 	try {
-		let sql = '';
+		let conditions = ''
 		let params: string[] = [];
 
+		// Fulltext search
 		if (searchTerm) {
 			const matchCols = searchableColumns.join(', ');
+			conditions += ` AND MATCH(${matchCols}) AGAINST(? IN BOOLEAN MODE)`;
+			params.push(`*${searchTerm}*`);
+		}
 
-			// We must use MATCH ... AGAINST to use the FULLTEXT index.
-			// 'IN BOOLEAN MODE' allows us to use wildcards (*).
-			sql = `
-        SELECT * FROM asset_inventory
-        WHERE MATCH(${matchCols}) AGAINST(? IN BOOLEAN MODE)
-      `;
+		const groupedFilters: Record<string, string[]> = {};
 
-			// We add '*' wildcards to mimic the "LIKE %...%" behavior
-			params = [`*${searchTerm}*`];
-		} else {
-			// No search term, just return all assets
-			sql = 'SELECT * FROM asset_inventory';
+		// Filters
+		for (const filter of filterParams) {
+			const [column, value] = filter.split(':');
+			if (column && value) {
+				if (!groupedFilters[column]) {
+					groupedFilters[column] = [];
+				}
+				groupedFilters[column].push(value);
+			}
+		}
+
+		for (const [column, values] of Object.entries(groupedFilters)) {
+			// Use backticks to escape the column name
+			const escapedColumn = `\`${column}\``;
+
+			const placeholders = values.map(() => '?').join(', ');
+			
+			conditions += ` AND ${escapedColumn} IN (${placeholders})`;
+			params.push(...values); // Spread all values as parameters
+		}
+
+		let sql = 'SELECT * FROM `asset_inventory`';
+
+		if (conditions) {
+				sql += ` WHERE ${conditions.substring(5)}`; 
 		}
 
 		sql += ' ORDER BY `id`';
