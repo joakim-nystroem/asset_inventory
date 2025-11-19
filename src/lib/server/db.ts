@@ -1,4 +1,8 @@
-import mysql from 'mysql2/promise';
+import { createPool } from 'mysql2'; // You keep using mysql2!
+import { Kysely, MysqlDialect } from 'kysely'
+
+import type { Database } from './db_types';
+
 import { 
   PRIVATE_DB_HOST, 
   PRIVATE_DB_PORT, 
@@ -7,26 +11,20 @@ import {
   PRIVATE_DB_PASSWORD 
 } from '$env/static/private';
 
-const pool = mysql.createPool({
-  host: PRIVATE_DB_HOST,
-  port: parseInt(PRIVATE_DB_PORT || '3306', 10),
-  user: PRIVATE_DB_USER,
-  password: PRIVATE_DB_PASSWORD,
-  database: PRIVATE_DB_NAME,
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0
+
+const dialect = new MysqlDialect({
+  pool: createPool({
+    host: PRIVATE_DB_HOST,
+    port: parseInt(PRIVATE_DB_PORT || '3306', 10),
+    user: PRIVATE_DB_USER,
+    password: PRIVATE_DB_PASSWORD,
+    database: PRIVATE_DB_NAME,
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0
+  })
 });
 
-// Log connection status
-pool.getConnection()
-  .then(connection => {
-    console.log('Database connected successfully!');
-    connection.release();
-  })
-  .catch(err => {
-    console.error('Error connecting to database:', err.message);
-  });
-
-// Export the pool to be used in server-side load functions and form actions
-export default pool;
+export const db = new Kysely<Database>({
+  dialect,
+});

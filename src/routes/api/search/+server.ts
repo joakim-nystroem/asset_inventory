@@ -1,79 +1,53 @@
 import { json, error as svelteError } from '@sveltejs/kit';
+import { sql, type SqlBool } from 'kysely';
+import { db } from '$lib/server/db';
 import type { RequestHandler } from './$types';
-import db from '$lib/server/db';
-import type { RowDataPacket } from 'mysql2';
+import type { AssetInventoryTable } from '$lib/server/db_types';
 
-// The columns *covered by our FULLTEXT index*.
+type AssetColumn = keyof AssetInventoryTable;
+
 const searchableColumns = [
-	'bu_estate',
-	'department',
-	'location',
-	'node',
-	'asset_type',
-	'manufacturer',
-	'model',
-	'wbd_tag',
-	'serial_license'
+  'bu_estate', 'department', 'location', 'node',
+  'asset_type', 'manufacturer', 'model', 'wbd_tag', 'serial_license'
 ];
 
 export const GET: RequestHandler = async ({ url }) => {
-	const searchTerm = url.searchParams.get('q') || '';
-	const filterParams = url.searchParams.getAll('filter');
+  const searchTerm = url.searchParams.get('q') || '';
+  const filterParams = url.searchParams.getAll('filter');
 
-	try {
-		let conditions = ''
-		let params: string[] = [];
+  try {
+    let query = db.selectFrom('asset_inventory').selectAll();
 
-		// Fulltext search
-		if (searchTerm) {
-			const matchCols = searchableColumns.join(', ');
-			conditions += ` AND MATCH(${matchCols}) AGAINST(? IN BOOLEAN MODE)`;
-			params.push(`*${searchTerm}*`);
-		}
+    // 2. Handle Full Text Search
+    if (searchTerm) {
+      query = query.where(
+         sql<SqlBool>`MATCH(${sql.raw(searchableColumns.join(', '))}) AGAINST (${`*${searchTerm}*`} IN BOOLEAN MODE)`
+       );
+    }
 
-		const groupedFilters: Record<string, string[]> = {};
+    // 3. Handle Dynamic Filters
+    const groupedFilters: Record<string, string[]> = {};
+    
+    for (const filter of filterParams) {
+      const [column, value] = filter.split(':');
+      if (column && value) { 
+        if (!groupedFilters[column]) groupedFilters[column] = [];
+        groupedFilters[column].push(value);
+      }
+    }
 
-		// Filters
-		for (const filter of filterParams) {
-			const [column, value] = filter.split(':');
-			if (column && value) {
-				if (!groupedFilters[column]) {
-					groupedFilters[column] = [];
-				}
-				groupedFilters[column].push(value);
-			}
-		}
+    // Apply filters
+    for (const [column, values] of Object.entries(groupedFilters)) {
+        query = query.where(column as AssetColumn, 'in', values);
+    }
 
-		for (const [column, values] of Object.entries(groupedFilters)) {
-			// Use backticks to escape the column name
-			const escapedColumn = `\`${column}\``;
+    // 4. Execute
+    const assets = await query.orderBy('id').execute();
 
-			const placeholders = values.map(() => '?').join(', ');
-			
-			conditions += ` AND ${escapedColumn} IN (${placeholders})`;
-			params.push(...values); // Spread all values as parameters
-		}
+    return json({ assets });
 
-		let sql = 'SELECT * FROM `asset_inventory`';
-
-		if (conditions) {
-				sql += ` WHERE ${conditions.substring(5)}`; 
-		}
-
-		sql += ' ORDER BY `id`';
-
-		const [rows] = (await db.query(sql, params)) as RowDataPacket[][];
-		const assets = JSON.parse(JSON.stringify(rows));
-
-		return json({ assets });
-	} catch (err: unknown) {
-		let dbError: string;
-		if (err instanceof Error) {
-			dbError = err.message;
-		} else {
-			dbError = 'An unknown database error occurred.';
-		}
-		console.error('Database query failed:', dbError);
-		throw svelteError(500, dbError);
-	}
+  } catch (err) {
+    console.error('Database query failed:', err);
+    throw svelteError(500, 'Database error');
+  }
 };
