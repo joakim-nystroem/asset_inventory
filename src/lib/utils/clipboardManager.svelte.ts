@@ -80,28 +80,37 @@ export class ClipboardManager {
 
   /**
    * Paste from clipboard using Batch Recording
+   * Returns the dimensions of the pasted area { rows, cols } or null
    */
   async paste(
     target: { row: number; col: number } | null,
     assets: any[],
     keys: string[],
     historyManager: HistoryManager
-  ) {
-    if (!target) return;
+  ): Promise<{ rows: number; cols: number } | null> {
+    if (!target) return null;
     
     const systemText = await readFromClipboard();
-    if (systemText === null) return;
+    if (systemText === null) return null;
 
     const useInternal = this.internal.length > 0 && systemText === this.lastCopiedText;
     
     // Collection for batch history
     const batchChanges: HistoryAction[] = [];
+    
+    // Track paste dimensions
+    let maxRelRow = 0;
+    let maxRelCol = 0;
 
     if (useInternal) {
       for (const item of this.internal) {
         const destRow = target.row + item.relRow;
         const destCol = target.col + item.relCol;
         
+        // Track dimensions
+        if (item.relRow > maxRelRow) maxRelRow = item.relRow;
+        if (item.relCol > maxRelCol) maxRelCol = item.relCol;
+
         // Apply value and collect change record
         const change = this.applyValue(destRow, destCol, item.value, assets, keys);
         if (change) batchChanges.push(change);
@@ -110,8 +119,15 @@ export class ClipboardManager {
       const rows = systemText.split(/\r?\n/);
       rows.forEach((rowStr, rIdx) => {
         if (!rowStr) return;
+        
+        // Track row dimension
+        if (rIdx > maxRelRow) maxRelRow = rIdx;
+
         const cells = rowStr.split('\t');
         cells.forEach((cellValue, cIdx) => {
+          // Track col dimension
+          if (cIdx > maxRelCol) maxRelCol = cIdx;
+
           const destRow = target.row + rIdx;
           const destCol = target.col + cIdx;
           
@@ -127,6 +143,8 @@ export class ClipboardManager {
       historyManager.recordBatch(batchChanges);
       console.log(`Pasted ${batchChanges.length} cells.`);
     }
+
+    return { rows: maxRelRow + 1, cols: maxRelCol + 1 };
   }
 
   /**

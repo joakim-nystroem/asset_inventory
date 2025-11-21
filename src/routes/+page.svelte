@@ -1,5 +1,4 @@
 <script lang="ts">
- 
   // --- UTILS IMPORTS ---
   import { createKeyboardHandler } from '$lib/utils/keyboardHandler';
   
@@ -20,7 +19,7 @@
   const selection = new SelectionManager();
   const clipboard = new ClipboardManager();
   const search = new SearchManager();
-  const sort = new SortManager(); 
+  const sort = new SortManager();
   const virtualScroll = new VirtualScrollManager();
 
   let { data } = $props();
@@ -54,12 +53,11 @@
   // --- Search Logic ---
   async function handleSearch() {
     const result = await search.search(data.assets);
-
     // Always update assets with search results
     assets = result;
     selection.reset();
     sort.invalidateCache();
-    sort.reset(); 
+    sort.reset();
   }
 
   // --- Sorting Logic ---
@@ -96,11 +94,32 @@
 
   async function handlePaste() {
     const target = getActionTarget();
-    await clipboard.paste(target, assets, keys, history);
+    if (!target) return;
+
+    // Paste returns the size of the pasted block
+    const pasteSize = await clipboard.paste(target, assets, keys, history);
+    
     if (contextMenu.visible) contextMenu.close();
+
+    if (pasteSize) {
+      // Calculate new selection bounds, clamped to grid size
+      const startRow = target.row;
+      const startCol = target.col;
+      const endRow = Math.min(startRow + pasteSize.rows - 1, assets.length - 1);
+      const endCol = Math.min(startCol + pasteSize.cols - 1, keys.length - 1);
+      
+      // Set the selection programmatically
+      selection.startSelection(startRow, startCol);
+      selection.extendSelection(endRow, endCol);
+      
+      // CRITICAL FIX: Stop "selecting" mode so mouse movement doesn't continue the selection
+      selection.endSelection();
+    }
   }
 
-  function handleEditAction() { contextMenu.close(); }
+  function handleEditAction() { 
+    contextMenu.close();
+  }
 
   // --- Lifecycle ---
   function onWindowClick(e: MouseEvent) {
@@ -121,7 +140,7 @@
         }
       });
       resizeObserver.observe(scrollContainer);
-      
+     
       return () => {
         window.removeEventListener('click', onWindowClick);
         window.removeEventListener('keydown', handleKeyDown);
@@ -138,12 +157,14 @@
   });
 
   $effect(() => { 
+    // Reactive dependencies
     search.term;
     search.selectedFilters;
     handleSearch(); 
   })
 
   $effect(() => {
+    // Cleanup cache when assets change
     assets; 
     search.cleanupFilterCache();
   });
@@ -193,30 +214,6 @@
   >
     <div class="w-max min-w-full bg-white dark:bg-slate-800 text-left relative" style="height: {virtualScroll.getTotalHeight(assets.length)}px;">
       
-      {#if selection.copyOverlay.visible}
-        <div
-          class="absolute pointer-events-none z-20 border-2 border-dotted border-blue-600 dark:border-blue-500"
-          style="
-            top: {selection.copyOverlay.top}px;
-            left: {selection.copyOverlay.left}px; 
-            width: {selection.copyOverlay.width}px; 
-            height: {selection.copyOverlay.height}px;
-          "
-        ></div>
-      {/if}
-
-      {#if selection.selectionOverlay.visible && !selection.selectionMatchesCopy()}
-        <div
-          class="absolute pointer-events-none z-10 border-2 border-blue-600 dark:border-blue-500 bg-blue-100/10 dark:bg-blue-500/10"
-          style="
-            top: {selection.selectionOverlay.top}px;
-            left: {selection.selectionOverlay.left}px; 
-            width: {selection.selectionOverlay.width}px; 
-            height: {selection.selectionOverlay.height}px;
-          "
-        ></div>
-      {/if}
-
       <div class="sticky top-0 z-20 flex border-b border-neutral-200 dark:border-slate-600 bg-neutral-50 dark:bg-slate-700">
         {#each keys as key}
           <div 
@@ -241,6 +238,30 @@
       </div>
 
       <div class="absolute w-full" style="transform: translateY({virtualScroll.getOffsetY()}px);">
+        {#if selection.copyOverlay.visible}
+            <div
+            class="absolute pointer-events-none z-20 border-2 border-dotted border-blue-600 dark:border-blue-500"
+            style="
+                top: {selection.copyOverlay.top}px;
+                left: {selection.copyOverlay.left}px; 
+                width: {selection.copyOverlay.width}px; 
+                height: {selection.copyOverlay.height}px;
+            "
+            ></div>
+        {/if}
+
+        {#if selection.selectionOverlay.visible && !selection.selectionMatchesCopy()}
+            <div
+            class="absolute pointer-events-none z-10 border-2 border-blue-600 dark:border-blue-500 bg-blue-100/10 dark:bg-blue-500/10"
+            style="
+                top: {selection.selectionOverlay.top}px;
+                left: {selection.selectionOverlay.left}px; 
+                width: {selection.selectionOverlay.width}px; 
+                height: {selection.selectionOverlay.height}px;
+            "
+            ></div>
+        {/if}
+
         {#each visibleData.items as asset, i (asset.id || (visibleData.startIndex + i))}
           {@const actualIndex = visibleData.startIndex + i}
           <div class="flex border-b border-neutral-200 dark:border-slate-700 hover:bg-blue-50 dark:hover:bg-slate-700 transition-colors">
@@ -266,7 +287,6 @@
           </div>
         {/each}
       </div>
-      
     </div>
   </div>
   <p class="mt-2 ml-1 text-sm text-neutral-600 dark:text-neutral-300">Showing {assets.length} items.</p>
@@ -294,7 +314,7 @@
       {#if headerMenu.filterOpen}
         <div class="absolute z-50 top-0 left-full ml-1 bg-white dark:bg-slate-900 border border-neutral-300 dark:border-slate-700 rounded shadow-lg p-1 text-sm min-w-48">
           <div class="max-h-48 overflow-y-auto no-scrollbar">
-            {#each search.getFilterItems(headerMenu.activeKey, assets) as item}
+             {#each search.getFilterItems(headerMenu.activeKey, assets) as item}
               <button class="block w-full text-left px-2 py-1 hover:bg-neutral-100 dark:hover:bg-slate-800 items-center cursor-pointer focus:bg-neutral-100 dark:focus:bg-slate-800 outline-none" onclick={() => { search.selectFilterItem(item, headerMenu.activeKey, assets); headerMenu.close(); }}>
                 <div class="flex flex-row items-center"><div class="min-w-3 text-xs">{#if search.isFilterSelected(headerMenu.activeKey, item)}✓{/if}</div><div class="truncate">{item}</div></div>
               </button>
@@ -307,8 +327,8 @@
 {/if}
 
 {#if contextMenu.visible}
-  <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
   <div
     class="fixed z-[60] bg-white dark:bg-slate-800 border border-neutral-300 dark:border-slate-700 rounded shadow-xl py-1 text-sm text-neutral-900 dark:text-neutral-100 min-w-32 cursor-default text-left flex flex-col"
     style="top: {contextMenu.y}px; left: {contextMenu.x}px;"
@@ -322,12 +342,14 @@
     <div class="border-b border-neutral-200 dark:border-slate-700 my-1"></div>
     
     <button class="px-3 py-1.5 hover:bg-blue-50 dark:hover:bg-slate-700 text-left flex items-center gap-2 group" onclick={handleCopy}>
-      <svg class="w-4 h-4 text-neutral-500 dark:text-neutral-400 group-hover:text-blue-600 dark:group-hover:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+      <svg class="w-4 h-4 text-neutral-500 dark:text-neutral-400 
+        group-hover:text-blue-600 dark:group-hover:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
       <span>Copy</span>
     </button>
     
     <button class="px-3 py-1.5 hover:bg-blue-50 dark:hover:bg-slate-700 text-left flex items-center gap-2 group" onclick={handlePaste}>
-      <svg class="w-4 h-4 text-neutral-500 dark:text-neutral-400 group-hover:text-blue-600 dark:group-hover:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path></svg>
+      <svg class="w-4 h-4 text-neutral-500 dark:text-neutral-400 group-hover:text-blue-600 dark:group-hover:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 
+        0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path></svg>
       <span>Paste</span>
     </button>
   </div>
