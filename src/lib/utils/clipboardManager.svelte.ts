@@ -1,11 +1,6 @@
-// $lib/utils/clipboardManager.svelte.ts
-
 import type { SelectionManager } from './selectionManager.svelte';
-import type { HistoryManager } from './history.svelte';
+import type { HistoryManager, HistoryAction } from './historyManager.svelte'; 
 
-/**
- * Copy text to system clipboard
- */
 async function copyToClipboard(text: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(text);
@@ -14,9 +9,6 @@ async function copyToClipboard(text: string): Promise<void> {
   }
 }
 
-/**
- * Read text from system clipboard
- */
 async function readFromClipboard(): Promise<string | null> {
   try {
     return await navigator.clipboard.readText();
@@ -33,12 +25,10 @@ export type CopiedItem = {
 };
 
 export class ClipboardManager {
-  // Internal clipboard storage
   internal = $state<CopiedItem[]>([]);
+  private lastCopiedText = '';
 
-  /**
-   * Copy selected cells to clipboard (both internal and system)
-   */
+  // ... (copy method remains the same) ...
   async copy(
     selectionManager: SelectionManager,
     assets: any[],
@@ -79,10 +69,8 @@ export class ClipboardManager {
 
     this.internal = newClipboard;
     
-    // Don't reset selection - keep it visible for keyboard navigation
-    // selectionManager.reset();
-
     const textBlock = externalRows.join('\n');
+    this.lastCopiedText = textBlock;
 
     // Copy to system clipboard (async)
     setTimeout(async () => {
@@ -91,7 +79,7 @@ export class ClipboardManager {
   }
 
   /**
-   * Paste from system clipboard into target cell
+   * Paste from clipboard using Batch Recording
    */
   async paste(
     target: { row: number; col: number } | null,
@@ -100,31 +88,78 @@ export class ClipboardManager {
     historyManager: HistoryManager
   ) {
     if (!target) return;
-    if (!assets[target.row]) return;
+    
+    const systemText = await readFromClipboard();
+    if (systemText === null) return;
 
-    const text = await readFromClipboard();
+    const useInternal = this.internal.length > 0 && systemText === this.lastCopiedText;
+    
+    // Collection for batch history
+    const batchChanges: HistoryAction[] = [];
 
-    if (text !== null) {
-      const key = keys[target.col];
-      const targetRow = assets[target.row];
-      const oldValue = String(targetRow[key] ?? '');
+    if (useInternal) {
+      for (const item of this.internal) {
+        const destRow = target.row + item.relRow;
+        const destCol = target.col + item.relCol;
+        
+        // Apply value and collect change record
+        const change = this.applyValue(destRow, destCol, item.value, assets, keys);
+        if (change) batchChanges.push(change);
+      }
+    } else {
+      const rows = systemText.split(/\r?\n/);
+      rows.forEach((rowStr, rIdx) => {
+        if (!rowStr) return;
+        const cells = rowStr.split('\t');
+        cells.forEach((cellValue, cIdx) => {
+          const destRow = target.row + rIdx;
+          const destCol = target.col + cIdx;
+          
+          // Apply value and collect change record
+          const change = this.applyValue(destRow, destCol, cellValue, assets, keys);
+          if (change) batchChanges.push(change);
+        });
+      });
+    }
 
-      targetRow[key] = text;
-      historyManager.record(targetRow.id, key, oldValue, text);
-      console.log(`Pasted '${text}' into [${target.row}, ${key}]`);
+    // Commit all changes as a single history event
+    if (batchChanges.length > 0) {
+      historyManager.recordBatch(batchChanges);
+      console.log(`Pasted ${batchChanges.length} cells.`);
     }
   }
 
   /**
-   * Clear internal clipboard
+   * Mutates the asset and returns the history action (or null if no change)
    */
-  clear() {
-    this.internal = [];
+  private applyValue(
+    row: number, 
+    col: number, 
+    value: string, 
+    assets: any[], 
+    keys: string[]
+  ): HistoryAction | null {
+    // Bounds Check
+    if (row >= 0 && row < assets.length && col >= 0 && col < keys.length) {
+      const asset = assets[row];
+      const key = keys[col];
+      const oldValue = String(asset[key] ?? '');
+      
+      if (oldValue !== value) {
+        // Perform Mutation
+        asset[key] = value;
+        // Return Record
+        return { id: asset.id, key, oldValue, newValue: value };
+      }
+    }
+    return null;
   }
 
-  /**
-   * Check if clipboard has data
-   */
+  clear() {
+    this.internal = [];
+    this.lastCopiedText = '';
+  }
+
   hasData() {
     return this.internal.length > 0;
   }

@@ -1,17 +1,17 @@
 <script lang="ts">
-  import { SvelteMap } from "svelte/reactivity";
-  
+ 
   // --- UTILS IMPORTS ---
-  import { sortData, type SortDirection } from '$lib/utils/sort';
+  // sortData is now handled internally by SortManager
   import { createKeyboardHandler } from '$lib/utils/keyboardHandler';
   
   // --- STATE CLASSES ---
   import { ContextMenuState } from '$lib/utils/contextMenu.svelte';
-  import { HistoryManager } from '$lib/utils/history.svelte';
+  import { HistoryManager } from '$lib/utils/historyManager.svelte.js';
   import { HeaderMenuState } from '$lib/utils/menu.svelte';
   import { SelectionManager } from '$lib/utils/selectionManager.svelte';
   import { ClipboardManager } from '$lib/utils/clipboardManager.svelte';
   import { SearchManager } from '$lib/utils/searchManager.svelte';
+  import { SortManager } from '$lib/utils/sortManager.svelte'; 
 
   // Initialize State Classes
   const contextMenu = new ContextMenuState();
@@ -20,16 +20,12 @@
   const selection = new SelectionManager();
   const clipboard = new ClipboardManager();
   const search = new SearchManager();
+  const sort = new SortManager(); 
 
   let { data } = $props();
 
   // --- Data State ---
-  let assets = $state(data.assets);
-
-  // --- View State ---
-  let sortKey = $state('');
-  let sortDir = $state<SortDirection>('asc');
-
+  let assets: Record<string, any>[] = $state(data.assets);
   let keys: string[] = data.assets.length > 0 ? Object.keys(data.assets[0]) : [];
 
   // --- Keyboard Handler ---
@@ -51,27 +47,22 @@
 
   // --- Search Logic ---
   async function handleSearch() {
-    assets = await search.search(data.assets);
-    selection.reset(); // Clear overlays on new data
-    resetSort();
+    const result = await search.search(data.assets);
+
+    if (result.length === data.assets.length) {
+      return
+    } 
+
+    assets = result;
+    selection.reset();
+    sort.reset(); 
   }
 
-  function resetSort() {
-    sortKey = '';
-    sortDir = 'asc';
-  }
-
- // --- Sorting Logic ---
-  function handleSortClick(key: string, dir: SortDirection) {
-    if (sortKey === key && sortDir === dir) {
-       sortKey = 'id'; 
-       sortDir = 'asc';
-    } else {
-       sortKey = key;
-       sortDir = dir;
-    }
-    assets = sortData(assets, sortKey, sortDir);
-    headerMenu.close(); 
+  // --- Sorting Logic ---
+  function applySort(key: string, dir: 'asc' | 'desc') {
+    sort.update(key, dir);
+    assets = sort.apply(assets);
+    headerMenu.close();
   }
 
   // --- Clipboard Logic ---
@@ -80,27 +71,8 @@
     if (contextMenu.visible) contextMenu.close();
   }
 
-  // --- Filter Logic ---
-  function getFilterItems(key: string) {
-    return search.getFilterItems(key, assets);
-  }
-
-  function selectFilterItem(item: string, key: string) {
-    search.selectFilterItem(item, key, assets);
-    headerMenu.close(); 
-  }
-
-  function removeFilterItem(filter: any) {
-    search.removeFilter(filter);
-  }
-
-  function clearFilter() {
-    search.clearAllFilters();
-  }
-
   // --- Context Menu ---
   function handleContextMenu(e: MouseEvent, row: number, col: number) {
-    // Right click selects the specific cell (collapsing selection)
     selection.selectCell(row, col);
     contextMenu.open(e, row, col);
   }
@@ -109,7 +81,6 @@
     if (contextMenu.visible) {
       return { row: contextMenu.row, col: contextMenu.col };
     }
-    // Use selectionStart as the target if menu is closed
     return selection.getAnchor();
   }
 
@@ -171,12 +142,12 @@
           <span class="cursor-default">{((filter.key).charAt(0).toUpperCase() + (filter.key).slice(1)).replaceAll('_', ' ')}: {filter.value}</span>
           <button 
             class="text-neutral-500 dark:text-neutral-300 text-base hover:dark:text-red-400 hover:text-red-600 hover:cursor-pointer"
-            onclick={() => removeFilterItem(filter)}>✕</button>
+            onclick={() => search.removeFilter(filter)}>✕</button>
         </div>
       {/each}
     </div>
     {#if search.getFilterCount() > 0}
-      <button onclick={clearFilter} class="cursor-pointer bg-red-600 hover:bg-red-700 px-2 py-1 text-neutral-100">Clear</button>
+      <button onclick={() => search.clearAllFilters()} class="cursor-pointer bg-red-600 hover:bg-red-700 px-2 py-1 text-neutral-100">Clear</button>
     {/if}
   </div>
 </div>
@@ -189,7 +160,7 @@
         <div
           class="absolute pointer-events-none z-20 border-2 border-dotted border-blue-600 dark:border-blue-500"
           style="
-            top: {selection.copyOverlay.top}px; 
+            top: {selection.copyOverlay.top}px;
             left: {selection.copyOverlay.left}px; 
             width: {selection.copyOverlay.width}px; 
             height: {selection.copyOverlay.height}px;
@@ -201,7 +172,7 @@
         <div
           class="absolute pointer-events-none z-10 border-2 border-blue-600 dark:border-blue-500 bg-blue-100/10 dark:bg-blue-500/10"
           style="
-            top: {selection.selectionOverlay.top}px; 
+            top: {selection.selectionOverlay.top}px;
             left: {selection.selectionOverlay.left}px; 
             width: {selection.selectionOverlay.width}px; 
             height: {selection.selectionOverlay.height}px;
@@ -221,8 +192,8 @@
             >
               <span class="truncate">{key.replaceAll("_", " ")}</span>
               <span class="ml-1">
-                {#if sortKey === key}
-                  <span>{sortDir === 'asc' ? '▲' : '▼'}</span>
+                {#if sort.key === key}
+                  <span>{sort.direction === 'asc' ? '▲' : '▼'}</span>
                 {:else}
                   <span class="invisible group-hover:visible text-neutral-400">▾</span>
                 {/if}
@@ -271,12 +242,13 @@
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="fixed z-50 bg-white dark:bg-slate-900 border border-neutral-300 dark:border-slate-700 rounded shadow-lg p-1 text-sm text-neutral-900 dark:text-neutral-100 w-48 font-normal normal-case cursor-default text-left" style="top: {headerMenu.y}px; left: {headerMenu.x}px;" onclick={(e) => e.stopPropagation()}>
-    <button class="block w-full text-left px-2 py-1 hover:bg-neutral-100 dark:hover:bg-slate-800 items-center cursor-pointer focus:bg-neutral-100 dark:focus:bg-slate-800 outline-none" onclick={() => handleSortClick(headerMenu.activeKey, 'asc')}>
-      <div class="flex flex-row items-center"><div class="min-w-3 text-xs">{#if sortKey === headerMenu.activeKey && sortDir === 'asc'}✓{/if}</div><div>Sort A to Z</div></div>
+    <button class="block w-full text-left px-2 py-1 hover:bg-neutral-100 dark:hover:bg-slate-800 items-center cursor-pointer focus:bg-neutral-100 dark:focus:bg-slate-800 outline-none" onclick={() => applySort(headerMenu.activeKey, 'asc')}>
+      <div class="flex flex-row items-center"><div class="min-w-3 text-xs">{#if sort.key === headerMenu.activeKey && sort.direction === 'asc'}✓{/if}</div><div>Sort A to Z</div></div>
     </button>
-    <button class="block w-full text-left px-2 py-1 hover:bg-neutral-100 dark:hover:bg-slate-800 items-center cursor-pointer focus:bg-neutral-100 dark:focus:bg-slate-800 outline-none" onclick={() => handleSortClick(headerMenu.activeKey, 'desc')}>
-      <div class="flex flex-row items-center border-b border-neutral-300 dark:border-neutral-600 pb-1"><div class="min-w-3 text-xs">{#if sortKey === headerMenu.activeKey && sortDir === 'desc'}✓{/if}</div><div>Sort Z to A</div></div>
+    <button class="block w-full text-left px-2 py-1 hover:bg-neutral-100 dark:hover:bg-slate-800 items-center cursor-pointer focus:bg-neutral-100 dark:focus:bg-slate-800 outline-none" onclick={() => applySort(headerMenu.activeKey, 'desc')}>
+      <div class="flex flex-row items-center border-b border-neutral-300 dark:border-neutral-600 pb-1"><div class="min-w-3 text-xs">{#if sort.key === headerMenu.activeKey && sort.direction === 'desc'}✓{/if}</div><div>Sort Z to A</div></div>
     </button>
+  
     <div class="relative">
       <button class="block w-full text-left px-2 py-1 hover:bg-neutral-100 dark:hover:bg-slate-800 items-center cursor-pointer focus:bg-neutral-100 dark:focus:bg-slate-800 outline-none" onclick={() => headerMenu.toggleFilter()}>
         <div class="flex flex-row items-center border-b border-neutral-300 dark:border-neutral-600 pb-1"><div class="min-w-3 text-xs"></div><div>Filter By &gt;</div></div>
@@ -284,8 +256,8 @@
       {#if headerMenu.filterOpen}
         <div class="absolute z-50 top-0 left-full ml-1 bg-white dark:bg-slate-900 border border-neutral-300 dark:border-slate-700 rounded shadow-lg p-1 text-sm min-w-48">
           <div class="max-h-48 overflow-y-auto no-scrollbar">
-            {#each getFilterItems(headerMenu.activeKey) as item}
-              <button class="block w-full text-left px-2 py-1 hover:bg-neutral-100 dark:hover:bg-slate-800 items-center cursor-pointer focus:bg-neutral-100 dark:focus:bg-slate-800 outline-none" onclick={() => selectFilterItem(item, headerMenu.activeKey)}>
+            {#each search.getFilterItems(headerMenu.activeKey, assets) as item}
+              <button class="block w-full text-left px-2 py-1 hover:bg-neutral-100 dark:hover:bg-slate-800 items-center cursor-pointer focus:bg-neutral-100 dark:focus:bg-slate-800 outline-none" onclick={() => { search.selectFilterItem(item, headerMenu.activeKey, assets); headerMenu.close(); }}>
                 <div class="flex flex-row items-center"><div class="min-w-3 text-xs">{#if search.isFilterSelected(headerMenu.activeKey, item)}✓{/if}</div><div class="truncate">{item}</div></div>
               </button>
             {:else}<div class="px-2 py-1 text-neutral-500">No items found.</div>{/each}

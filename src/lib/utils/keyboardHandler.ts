@@ -57,11 +57,7 @@ export function createKeyboardHandler(
       
       if (key === 'z') {
         e.preventDefault();
-        if (e.shiftKey) {
-          handlers.onRedo();
-        } else {
-          handlers.onUndo();
-        }
+        handlers.onUndo();
         return;
       }
       
