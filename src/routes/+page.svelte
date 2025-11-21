@@ -107,12 +107,14 @@
       const startCol = target.col;
       const endRow = Math.min(startRow + pasteSize.rows - 1, assets.length - 1);
       const endCol = Math.min(startCol + pasteSize.cols - 1, keys.length - 1);
+
+      selection.reset();
       
       // Set the selection programmatically
       selection.startSelection(startRow, startCol);
       selection.extendSelection(endRow, endCol);
       
-      // CRITICAL FIX: Stop "selecting" mode so mouse movement doesn't continue the selection
+      // Stop "selecting" mode so mouse movement doesn't continue the selection
       selection.endSelection();
     }
   }
@@ -299,26 +301,64 @@
 {#if headerMenu.activeKey}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="fixed z-50 bg-white dark:bg-slate-900 border border-neutral-300 dark:border-slate-700 rounded shadow-lg p-1 text-sm text-neutral-900 dark:text-neutral-100 w-48 font-normal normal-case cursor-default text-left" style="top: {headerMenu.y}px; left: {headerMenu.x}px;" onclick={(e) => e.stopPropagation()}>
-    <button class="block w-full text-left px-2 py-1 hover:bg-neutral-100 dark:hover:bg-slate-800 items-center cursor-pointer focus:bg-neutral-100 dark:focus:bg-slate-800 outline-none" onclick={() => applySort(headerMenu.activeKey, 'asc')}>
-      <div class="flex flex-row items-center"><div class="min-w-3 text-xs">{#if sort.key === headerMenu.activeKey && sort.direction === 'asc'}✓{/if}</div><div>Sort A to Z</div></div>
+  <div 
+    class="fixed z-50 bg-white dark:bg-slate-800 border border-neutral-300 dark:border-slate-700 rounded shadow-xl py-1 text-sm text-neutral-900 dark:text-neutral-100 min-w-48 font-normal normal-case cursor-default text-left flex flex-col" 
+    style="top: {headerMenu.y}px; left: {headerMenu.x}px;" 
+    onclick={(e) => e.stopPropagation()}
+  >
+    <button 
+      class="px-3 py-1.5 hover:bg-blue-50 dark:hover:bg-slate-700 text-left flex items-center gap-2 group w-full" 
+      onclick={() => applySort(headerMenu.activeKey, 'asc')}
+    >
+      <div class="w-4 flex justify-center text-blue-600 dark:text-blue-400 font-bold">
+        {#if sort.key === headerMenu.activeKey && sort.direction === 'asc'}✓{/if}
+      </div>
+      <span>Sort A to Z</span>
     </button>
-    <button class="block w-full text-left px-2 py-1 hover:bg-neutral-100 dark:hover:bg-slate-800 items-center cursor-pointer focus:bg-neutral-100 dark:focus:bg-slate-800 outline-none" onclick={() => applySort(headerMenu.activeKey, 'desc')}>
-      <div class="flex flex-row items-center border-b border-neutral-300 dark:border-neutral-600 pb-1"><div class="min-w-3 text-xs">{#if sort.key === headerMenu.activeKey && sort.direction === 'desc'}✓{/if}</div><div>Sort Z to A</div></div>
+    
+    <button 
+      class="px-3 py-1.5 hover:bg-blue-50 dark:hover:bg-slate-700 text-left flex items-center gap-2 group w-full" 
+      onclick={() => applySort(headerMenu.activeKey, 'desc')}
+    >
+      <div class="w-4 flex justify-center text-blue-600 dark:text-blue-400 font-bold">
+        {#if sort.key === headerMenu.activeKey && sort.direction === 'desc'}✓{/if}
+      </div>
+      <span>Sort Z to A</span>
     </button>
   
-    <div class="relative">
-      <button class="block w-full text-left px-2 py-1 hover:bg-neutral-100 dark:hover:bg-slate-800 items-center cursor-pointer focus:bg-neutral-100 dark:focus:bg-slate-800 outline-none" onclick={() => headerMenu.toggleFilter()}>
-        <div class="flex flex-row items-center border-b border-neutral-300 dark:border-neutral-600 pb-1"><div class="min-w-3 text-xs"></div><div>Filter By &gt;</div></div>
+    <div class="border-b border-neutral-200 dark:border-slate-700 my-1"></div>
+  
+    <div class="relative w-full">
+      <button 
+        class="px-3 py-1.5 hover:bg-blue-50 dark:hover:bg-slate-700 text-left flex items-center justify-between group w-full" 
+        onclick={() => headerMenu.toggleFilter()}
+      >
+        <div class="flex items-center gap-2">
+           <div class="w-4"></div>
+           <span>Filter By</span>
+        </div>
+        <span class="text-neutral-400 group-hover:text-blue-600 dark:group-hover:text-blue-400">›</span>
       </button>
+
       {#if headerMenu.filterOpen}
-        <div class="absolute z-50 top-0 left-full ml-1 bg-white dark:bg-slate-900 border border-neutral-300 dark:border-slate-700 rounded shadow-lg p-1 text-sm min-w-48">
+        <div class="absolute z-50 top-0 left-full ml-1 bg-white dark:bg-slate-800 border border-neutral-300 dark:border-slate-700 rounded shadow-xl py-1 text-sm min-w-48">
           <div class="max-h-48 overflow-y-auto no-scrollbar">
              {#each search.getFilterItems(headerMenu.activeKey, assets) as item}
-              <button class="block w-full text-left px-2 py-1 hover:bg-neutral-100 dark:hover:bg-slate-800 items-center cursor-pointer focus:bg-neutral-100 dark:focus:bg-slate-800 outline-none" onclick={() => { search.selectFilterItem(item, headerMenu.activeKey, assets); headerMenu.close(); }}>
-                <div class="flex flex-row items-center"><div class="min-w-3 text-xs">{#if search.isFilterSelected(headerMenu.activeKey, item)}✓{/if}</div><div class="truncate">{item}</div></div>
+              <button 
+                class="px-3 py-1.5 hover:bg-blue-50 dark:hover:bg-slate-700 text-left flex items-center gap-2 group w-full" 
+                onclick={() => { 
+                  search.selectFilterItem(item, headerMenu.activeKey, assets); 
+                  headerMenu.close(); 
+                }}
+              >
+                <div class="w-4 flex justify-center text-blue-600 dark:text-blue-400 font-bold">
+                  {#if search.isFilterSelected(headerMenu.activeKey, item)}✓{/if}
+                </div>
+                <div class="truncate">{item}</div>
               </button>
-            {:else}<div class="px-2 py-1 text-neutral-500">No items found.</div>{/each}
+            {:else}
+              <div class="px-3 py-1.5 text-neutral-500">No items found.</div>
+            {/each}
           </div>
         </div>
       {/if}
@@ -327,8 +367,8 @@
 {/if}
 
 {#if contextMenu.visible}
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
   <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="fixed z-[60] bg-white dark:bg-slate-800 border border-neutral-300 dark:border-slate-700 rounded shadow-xl py-1 text-sm text-neutral-900 dark:text-neutral-100 min-w-32 cursor-default text-left flex flex-col"
     style="top: {contextMenu.y}px; left: {contextMenu.x}px;"
