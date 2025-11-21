@@ -1,7 +1,6 @@
 <script lang="ts">
  
   // --- UTILS IMPORTS ---
-  // sortData is now handled internally by SortManager
   import { createKeyboardHandler } from '$lib/utils/keyboardHandler';
   
   // --- STATE CLASSES ---
@@ -12,6 +11,7 @@
   import { ClipboardManager } from '$lib/utils/clipboardManager.svelte';
   import { SearchManager } from '$lib/utils/searchManager.svelte';
   import { SortManager } from '$lib/utils/sortManager.svelte'; 
+  import { VirtualScrollManager } from '$lib/utils/virtualScrollManager.svelte';
 
   // Initialize State Classes
   const contextMenu = new ContextMenuState();
@@ -21,12 +21,18 @@
   const clipboard = new ClipboardManager();
   const search = new SearchManager();
   const sort = new SortManager(); 
+  const virtualScroll = new VirtualScrollManager();
 
   let { data } = $props();
 
   // --- Data State ---
   let assets: Record<string, any>[] = $state(data.assets);
   let keys: string[] = data.assets.length > 0 ? Object.keys(data.assets[0]) : [];
+  let scrollContainer: HTMLDivElement | null = $state(null);
+  let isSorting = $state(false);
+
+  // Get visible items for rendering
+  const visibleData = $derived(virtualScroll.getVisibleItems(assets));
 
   // --- Keyboard Handler ---
   const handleKeyDown = createKeyboardHandler(
@@ -49,19 +55,22 @@
   async function handleSearch() {
     const result = await search.search(data.assets);
 
-    if (result.length === data.assets.length) {
-      return
-    } 
-
+    // Always update assets with search results
     assets = result;
     selection.reset();
+    sort.invalidateCache();
     sort.reset(); 
   }
 
   // --- Sorting Logic ---
-  function applySort(key: string, dir: 'asc' | 'desc') {
+  async function applySort(key: string, dir: 'asc' | 'desc') {
+    isSorting = true;
     sort.update(key, dir);
-    assets = sort.apply(assets);
+    
+    // Use async sorting to avoid blocking UI
+    assets = await sort.applyAsync(assets);
+    
+    isSorting = false;
     headerMenu.close();
   }
 
@@ -72,9 +81,10 @@
   }
 
   // --- Context Menu ---
-  function handleContextMenu(e: MouseEvent, row: number, col: number) {
-    selection.selectCell(row, col);
-    contextMenu.open(e, row, col);
+  function handleContextMenu(e: MouseEvent, visibleIndex: number, col: number) {
+    const actualRow = virtualScroll.getActualIndex(visibleIndex);
+    selection.selectCell(actualRow, col);
+    contextMenu.open(e, actualRow, col);
   }
 
   function getActionTarget() {
@@ -102,6 +112,24 @@
     window.addEventListener('click', onWindowClick);
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('mouseup', () => selection.endSelection());
+    
+    // Measure container height on mount/resize
+    if (scrollContainer) {
+      const resizeObserver = new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          virtualScroll.updateContainerHeight(entry.contentRect.height);
+        }
+      });
+      resizeObserver.observe(scrollContainer);
+      
+      return () => {
+        window.removeEventListener('click', onWindowClick);
+        window.removeEventListener('keydown', handleKeyDown);
+        window.removeEventListener('mouseup', () => selection.endSelection());
+        resizeObserver.disconnect();
+      };
+    }
+    
     return () => {
       window.removeEventListener('click', onWindowClick);
       window.removeEventListener('keydown', handleKeyDown);
@@ -135,7 +163,7 @@
       class="cursor-pointer bg-blue-500 hover:bg-blue-600 px-2 py-1 text-neutral-100">Search</button
     >
   </div>
-  <div class="flex flex-row w-full justify-between">
+  <div class="flex flex-row w-full justify-between items-center">
     <div class="flex flex-row text-xs gap-2">
       {#each search.selectedFilters as filter} 
         <div class="p-1 border rounded-md border-neutral-700 dark:border-neutral-300 space-x-2 flex items-center">
@@ -146,15 +174,24 @@
         </div>
       {/each}
     </div>
-    {#if search.getFilterCount() > 0}
-      <button onclick={() => search.clearAllFilters()} class="cursor-pointer bg-red-600 hover:bg-red-700 px-2 py-1 text-neutral-100">Clear</button>
-    {/if}
+    <div class="flex gap-2 items-center">
+      {#if isSorting}
+        <span class="text-xs text-neutral-500 dark:text-neutral-400 animate-pulse">Sorting...</span>
+      {/if}
+      {#if search.getFilterCount() > 0}
+        <button onclick={() => search.clearAllFilters()} class="cursor-pointer bg-red-600 hover:bg-red-700 px-2 py-1 text-neutral-100">Clear</button>
+      {/if}
+    </div>
   </div>
 </div>
 
 {#if assets.length > 0}
-  <div class="rounded-lg border border-neutral-200 dark:border-slate-700 bg-white dark:bg-slate-800 overflow-auto h-[calc(100dvh-9.3rem)] shadow-md relative select-none">
-    <div class="w-max min-w-full bg-white dark:bg-slate-800 text-left relative">
+  <div 
+    bind:this={scrollContainer}
+    onscroll={(e) => virtualScroll.handleScroll(e)}
+    class="rounded-lg border border-neutral-200 dark:border-slate-700 bg-white dark:bg-slate-800 overflow-auto h-[calc(100dvh-9.3rem)] shadow-md relative select-none"
+  >
+    <div class="w-max min-w-full bg-white dark:bg-slate-800 text-left relative" style="height: {virtualScroll.getTotalHeight(assets.length)}px;">
       
       {#if selection.copyOverlay.visible}
         <div
@@ -203,16 +240,17 @@
         {/each}
       </div>
 
-      <div class="flex flex-col">
-        {#each assets as asset, i (asset.id || i)}
+      <div class="absolute w-full" style="transform: translateY({virtualScroll.getOffsetY()}px);">
+        {#each visibleData.items as asset, i (asset.id || (visibleData.startIndex + i))}
+          {@const actualIndex = visibleData.startIndex + i}
           <div class="flex border-b border-neutral-200 dark:border-slate-700 hover:bg-blue-50 dark:hover:bg-slate-700 transition-colors">
             {#each keys as key, j} 
               <!-- svelte-ignore a11y_no_static_element_interactions -->
               <div
-                data-row={i}
+                data-row={actualIndex}
                 data-col={j} 
-                onmousedown={() => selection.startSelection(i, j)}
-                onmouseenter={() => selection.extendSelection(i, j)}
+                onmousedown={() => selection.startSelection(actualIndex, j)}
+                onmouseenter={() => selection.extendSelection(actualIndex, j)}
                 oncontextmenu={(e) => handleContextMenu(e, i, j)}
                 class="
                   h-8 px-2 flex items-center text-xs whitespace-nowrap overflow-hidden text-ellipsis cursor-cell
