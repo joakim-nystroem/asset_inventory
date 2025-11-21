@@ -2,80 +2,58 @@
   import { SvelteMap } from "svelte/reactivity";
   
   // --- UTILS IMPORTS ---
-  import { getKeyboardNavigation, type GridCell } from '$lib/utils/grid';
   import { sortData, type SortDirection } from '$lib/utils/sort';
-  import { getUniqueValues } from '$lib/utils/filter';
+  import { createKeyboardHandler } from '$lib/utils/keyboardHandler';
   
   // --- STATE CLASSES ---
-  import { ContextMenuState, copyToClipboard, readFromClipboard } from '$lib/utils/contextMenu.svelte';
+  import { ContextMenuState } from '$lib/utils/contextMenu.svelte';
   import { HistoryManager } from '$lib/utils/history.svelte';
   import { HeaderMenuState } from '$lib/utils/menu.svelte';
-
-  type Filter = {
-    key: string;    
-    value: string; 
-  };
+  import { SelectionManager } from '$lib/utils/selectionManager.svelte';
+  import { ClipboardManager } from '$lib/utils/clipboardManager.svelte';
+  import { SearchManager } from '$lib/utils/searchManager.svelte';
 
   // Initialize State Classes
   const contextMenu = new ContextMenuState();
   const history = new HistoryManager();
   const headerMenu = new HeaderMenuState();
+  const selection = new SelectionManager();
+  const clipboard = new ClipboardManager();
+  const search = new SearchManager();
 
   let { data } = $props();
 
   // --- Data State ---
   let assets = $state(data.assets);
-  let dbError = $state('');
-  let inputValue = $state('');
-  let searchTerm: string = $state('');
 
   // --- View State ---
   let sortKey = $state('');
   let sortDir = $state<SortDirection>('asc');
-  let selectedCell = $state<GridCell | null>(null);
-
-  let filterOptions: SvelteMap<string, any> = new SvelteMap();
-  let selectedFilters: Filter[] = $state([]);
 
   let keys: string[] = data.assets.length > 0 ? Object.keys(data.assets[0]) : [];
-  
-  // --- Search Logic (Inline) ---
+
+  // --- Keyboard Handler ---
+  const handleKeyDown = createKeyboardHandler(
+    selection,
+    {
+      onCopy: handleCopy,
+      onPaste: handlePaste,
+      onUndo: () => history.undo(assets),
+      onRedo: () => history.redo(assets),
+      onEscape: () => {
+        selection.resetAll();
+        clipboard.clear();
+        if (contextMenu.visible) contextMenu.close();
+      }
+    },
+    () => ({ rows: assets.length, cols: keys.length })
+  );
+
+  // --- Search Logic ---
   async function handleSearch() {
-    try {
-      const params = new URLSearchParams();
-      
-      // Build URL params locally
-      if (searchTerm) {
-        params.set('q', searchTerm);
-      }
-      
-      if (selectedFilters.length > 0) {
-        selectedFilters.forEach(f => params.append('filter', `${f.key}:${f.value}`));
-      }
-      
-      // Optimization: Reset if empty
-      if (!searchTerm && selectedFilters.length === 0) {
-        assets = [...data.assets];
-        resetSort();
-        return;
-      }
-
-      const response = await fetch(`./api/search?${params.toString()}`);
-      
-      if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.message || 'Failed to fetch assets');
-      }
-      
-      const result = await response.json();
-      assets = result.assets;
-      resetSort();
-
-    } catch (err) {
-      dbError = err instanceof Error ? err.message : 'An unknown error occurred.';
-      console.error('Database query failed:', dbError);
-      assets = [];
-    }
+    assets = await search.search(data.assets);
+    selection.reset(); // Clear overlays on new data
+    resetSort();
   }
 
   function resetSort() {
@@ -96,97 +74,52 @@
     headerMenu.close(); 
   }
 
-  // --- Filter Logic --- 
+  // --- Clipboard Logic ---
+  async function handleCopy() {
+    await clipboard.copy(selection, assets, keys);
+    if (contextMenu.visible) contextMenu.close();
+  }
+
+  // --- Filter Logic ---
   function getFilterItems(key: string) {
-    if(filterOptions.size > 0 && filterOptions.has(key)) {
-      return filterOptions.get(key);
-    }
-    return getUniqueValues(assets, key);
+    return search.getFilterItems(key, assets);
   }
 
   function selectFilterItem(item: string, key: string) {
-    const exists = selectedFilters.some(f => f.key === key && f.value === item);
-    if (exists) {
-      selectedFilters = selectedFilters.filter(f => !(f.key === key && f.value === item));
-    } else {
-      selectedFilters = [...selectedFilters, { key, value: item }];
-    }
-    if (!filterOptions.has(key)) {
-      filterOptions.set(key, getFilterItems(key));
-    }
+    search.selectFilterItem(item, key, assets);
     headerMenu.close(); 
   }
 
   function removeFilterItem(filter: any) {
-    selectedFilters = selectedFilters.filter(item => item != filter)
+    search.removeFilter(filter);
   }
 
   function clearFilter() {
-    selectedFilters = []
-  }
-   
-  // --- Grid/Input Logic ---
-  function handleCellClick(row: number, col: number) {
-    if (row === selectedCell?.row && col === selectedCell?.col) {
-      selectedCell = null;
-      return;
-    }
-    selectedCell = { row, col };
-  }
-
-  function handleKeyDown(e: KeyboardEvent) {
-    // Undo/Redo
-    if (e.metaKey || e.ctrlKey) {
-      if ((e.shiftKey && e.key.toLowerCase() === 'z') || e.key.toLowerCase() === 'y') {
-        e.preventDefault();
-        history.redo(assets);
-        return;
-      }
-      if (e.key.toLowerCase() === 'z') {
-        e.preventDefault();
-        history.undo(assets);
-        return;
-      }
-    }
-    // Navigation
-    const nextCell = getKeyboardNavigation(e, selectedCell, assets.length, keys.length);
-    if (nextCell) {
-      selectedCell = nextCell;
-    }
+    search.clearAllFilters();
   }
 
   // --- Context Menu ---
   function handleContextMenu(e: MouseEvent, row: number, col: number) {
-    selectedCell = { row, col };
+    // Right click selects the specific cell (collapsing selection)
+    selection.selectCell(row, col);
     contextMenu.open(e, row, col);
   }
 
-  async function handleCopy() {
-    if (contextMenu.row === -1) return;
-    const key = keys[contextMenu.col];
-    const value = String(assets[contextMenu.row][key] ?? '');
-    await copyToClipboard(value);
-    contextMenu.close();
+  function getActionTarget() {
+    if (contextMenu.visible) {
+      return { row: contextMenu.row, col: contextMenu.col };
+    }
+    // Use selectionStart as the target if menu is closed
+    return selection.getAnchor();
   }
 
   async function handlePaste() {
-    if (contextMenu.row === -1) return;
-    const text = await readFromClipboard();
-    if (text !== null) {
-      const key = keys[contextMenu.col];
-      const targetRow = assets[contextMenu.row];
-      const oldValue = String(targetRow[key] ?? '');
-      
-      targetRow[key] = text;
-      history.record(targetRow.id, key, oldValue, text);
-      // TODO: API Update call
-    }
-    contextMenu.close();
+    const target = getActionTarget();
+    await clipboard.paste(target, assets, keys, history);
+    if (contextMenu.visible) contextMenu.close();
   }
 
-  function handleEditAction() {
-    contextMenu.close();
-  }
+  function handleEditAction() { contextMenu.close(); }
 
   // --- Lifecycle ---
   function onWindowClick(e: MouseEvent) {
@@ -197,20 +130,23 @@
   $effect(() => {
     window.addEventListener('click', onWindowClick);
     window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('mouseup', () => selection.endSelection());
     return () => {
       window.removeEventListener('click', onWindowClick);
       window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('mouseup', () => selection.endSelection());
     };
   });
 
-  $effect(() => { handleSearch(); })
+  $effect(() => { 
+    search.term;
+    search.selectedFilters;
+    handleSearch(); 
+  })
 
   $effect(() => {
     assets; 
-    const activeFilterKeys = new Set(selectedFilters.map(f => f.key));
-    for (const key of filterOptions.keys()) {
-      if (!activeFilterKeys.has(key)) filterOptions.delete(key);
-    }
+    search.cleanupFilterCache();
   });
 </script>
 
@@ -218,19 +154,19 @@
   <h2 class="text-lg font-bold whitespace-nowrap">Asset Master</h2>
   <div class="flex gap-4 items-center">
     <input
-      bind:value={inputValue}
+      bind:value={search.inputValue}
       class="bg-white dark:bg-neutral-100 dark:text-neutral-700 p-1 border border-neutral-300 dark:border-none focus:outline-none"
       placeholder="Search this list..."
-      onkeydown={(e) => { if (e.key === 'Enter') searchTerm = inputValue }}
+      onkeydown={(e) => { if (e.key === 'Enter') search.executeSearch() }}
     />
     <button
-      onclick={() => { searchTerm = inputValue }}
+      onclick={() => search.executeSearch()}
       class="cursor-pointer bg-blue-500 hover:bg-blue-600 px-2 py-1 text-neutral-100">Search</button
     >
   </div>
   <div class="flex flex-row w-full justify-between">
     <div class="flex flex-row text-xs gap-2">
-      {#each selectedFilters as filter} 
+      {#each search.selectedFilters as filter} 
         <div class="p-1 border rounded-md border-neutral-700 dark:border-neutral-300 space-x-2 flex items-center">
           <span class="cursor-default">{((filter.key).charAt(0).toUpperCase() + (filter.key).slice(1)).replaceAll('_', ' ')}: {filter.value}</span>
           <button 
@@ -239,7 +175,7 @@
         </div>
       {/each}
     </div>
-    {#if selectedFilters.length > 0}
+    {#if search.getFilterCount() > 0}
       <button onclick={clearFilter} class="cursor-pointer bg-red-600 hover:bg-red-700 px-2 py-1 text-neutral-100">Clear</button>
     {/if}
   </div>
@@ -247,8 +183,32 @@
 
 {#if assets.length > 0}
   <div class="rounded-lg border border-neutral-200 dark:border-slate-700 bg-white dark:bg-slate-800 overflow-auto h-[calc(100dvh-9.3rem)] shadow-md relative select-none">
-    <div class="w-max min-w-full bg-white dark:bg-slate-800 text-left">
+    <div class="w-max min-w-full bg-white dark:bg-slate-800 text-left relative">
       
+      {#if selection.copyOverlay.visible}
+        <div
+          class="absolute pointer-events-none z-20 border-2 border-dotted border-blue-600 dark:border-blue-500"
+          style="
+            top: {selection.copyOverlay.top}px; 
+            left: {selection.copyOverlay.left}px; 
+            width: {selection.copyOverlay.width}px; 
+            height: {selection.copyOverlay.height}px;
+          "
+        ></div>
+      {/if}
+
+      {#if selection.selectionOverlay.visible && !selection.selectionMatchesCopy()}
+        <div
+          class="absolute pointer-events-none z-10 border-2 border-blue-600 dark:border-blue-500 bg-blue-100/10 dark:bg-blue-500/10"
+          style="
+            top: {selection.selectionOverlay.top}px; 
+            left: {selection.selectionOverlay.left}px; 
+            width: {selection.selectionOverlay.width}px; 
+            height: {selection.selectionOverlay.height}px;
+          "
+        ></div>
+      {/if}
+
       <div class="sticky top-0 z-20 flex border-b border-neutral-200 dark:border-slate-600 bg-neutral-50 dark:bg-slate-700">
         {#each keys as key}
           <div 
@@ -280,14 +240,14 @@
               <div
                 data-row={i}
                 data-col={j} 
-                onmousedown={() => handleCellClick(i, j)}
+                onmousedown={() => selection.startSelection(i, j)}
+                onmouseenter={() => selection.extendSelection(i, j)}
                 oncontextmenu={(e) => handleContextMenu(e, i, j)}
                 class="
                   h-8 px-2 flex items-center text-xs whitespace-nowrap overflow-hidden text-ellipsis cursor-cell
-                  text-neutral-700 dark:text-neutral-200 hover:bg-blue-100 dark:hover:bg-slate-600
-                  {selectedCell?.row === i && selectedCell?.col === j
-                    ? 'ring-2 ring-blue-600 dark:ring-blue-500 z-10' 
-                    : 'border-r border-neutral-200 dark:border-slate-700 last:border-r-0'}
+                  text-neutral-700 dark:text-neutral-200 
+                  hover:bg-blue-100 dark:hover:bg-slate-600
+                  border-r border-neutral-200 dark:border-slate-700 last:border-r-0
                 "
                 style="width: 150px; min-width: 150px;"
               >
@@ -301,8 +261,8 @@
     </div>
   </div>
   <p class="mt-2 ml-1 text-sm text-neutral-600 dark:text-neutral-300">Showing {assets.length} items.</p>
-{:else if dbError}
-  <p class="text-red-500">Error: {dbError}</p>
+{:else if search.error}
+  <p class="text-red-500">Error: {search.error}</p>
 {:else}
   <p>Query successful, but no data was returned.</p>
 {/if}
@@ -310,58 +270,25 @@
 {#if headerMenu.activeKey}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div
-    class="fixed z-50 bg-white dark:bg-slate-900 border border-neutral-300 dark:border-slate-700 rounded shadow-lg p-1 text-sm text-neutral-900 dark:text-neutral-100 w-48 font-normal normal-case cursor-default text-left"
-    style="top: {headerMenu.y}px; left: {headerMenu.x}px;"
-    onclick={(e) => e.stopPropagation()}
-  >
-    <button
-      class="block w-full text-left px-2 py-1 hover:bg-neutral-100 dark:hover:bg-slate-800 items-center cursor-pointer focus:bg-neutral-100 dark:focus:bg-slate-800 outline-none"
-      onclick={() => handleSortClick(headerMenu.activeKey, 'asc')}
-    >
-      <div class="flex flex-row items-center">
-        <div class="min-w-3 text-xs">{#if sortKey === headerMenu.activeKey && sortDir === 'asc'}✓{/if}</div>
-        <div>Sort A to Z</div>
-      </div>
+  <div class="fixed z-50 bg-white dark:bg-slate-900 border border-neutral-300 dark:border-slate-700 rounded shadow-lg p-1 text-sm text-neutral-900 dark:text-neutral-100 w-48 font-normal normal-case cursor-default text-left" style="top: {headerMenu.y}px; left: {headerMenu.x}px;" onclick={(e) => e.stopPropagation()}>
+    <button class="block w-full text-left px-2 py-1 hover:bg-neutral-100 dark:hover:bg-slate-800 items-center cursor-pointer focus:bg-neutral-100 dark:focus:bg-slate-800 outline-none" onclick={() => handleSortClick(headerMenu.activeKey, 'asc')}>
+      <div class="flex flex-row items-center"><div class="min-w-3 text-xs">{#if sortKey === headerMenu.activeKey && sortDir === 'asc'}✓{/if}</div><div>Sort A to Z</div></div>
     </button>
-
-    <button
-      class="block w-full text-left px-2 py-1 hover:bg-neutral-100 dark:hover:bg-slate-800 items-center cursor-pointer focus:bg-neutral-100 dark:focus:bg-slate-800 outline-none"
-      onclick={() => handleSortClick(headerMenu.activeKey, 'desc')}
-    >
-      <div class="flex flex-row items-center border-b border-neutral-300 dark:border-neutral-600 pb-1">
-        <div class="min-w-3 text-xs">{#if sortKey === headerMenu.activeKey && sortDir === 'desc'}✓{/if}</div>
-        <div>Sort Z to A</div>
-      </div>
+    <button class="block w-full text-left px-2 py-1 hover:bg-neutral-100 dark:hover:bg-slate-800 items-center cursor-pointer focus:bg-neutral-100 dark:focus:bg-slate-800 outline-none" onclick={() => handleSortClick(headerMenu.activeKey, 'desc')}>
+      <div class="flex flex-row items-center border-b border-neutral-300 dark:border-neutral-600 pb-1"><div class="min-w-3 text-xs">{#if sortKey === headerMenu.activeKey && sortDir === 'desc'}✓{/if}</div><div>Sort Z to A</div></div>
     </button>
-
     <div class="relative">
-      <button
-        class="block w-full text-left px-2 py-1 hover:bg-neutral-100 dark:hover:bg-slate-800 items-center cursor-pointer focus:bg-neutral-100 dark:focus:bg-slate-800 outline-none"
-        onclick={() => headerMenu.toggleFilter()}
-      >
-        <div class="flex flex-row items-center border-b border-neutral-300 dark:border-neutral-600 pb-1">
-          <div class="min-w-3 text-xs"></div>
-          <div>Filter By &gt;</div>
-        </div>
+      <button class="block w-full text-left px-2 py-1 hover:bg-neutral-100 dark:hover:bg-slate-800 items-center cursor-pointer focus:bg-neutral-100 dark:focus:bg-slate-800 outline-none" onclick={() => headerMenu.toggleFilter()}>
+        <div class="flex flex-row items-center border-b border-neutral-300 dark:border-neutral-600 pb-1"><div class="min-w-3 text-xs"></div><div>Filter By &gt;</div></div>
       </button>
-
       {#if headerMenu.filterOpen}
         <div class="absolute z-50 top-0 left-full ml-1 bg-white dark:bg-slate-900 border border-neutral-300 dark:border-slate-700 rounded shadow-lg p-1 text-sm min-w-48">
           <div class="max-h-48 overflow-y-auto no-scrollbar">
             {#each getFilterItems(headerMenu.activeKey) as item}
-              <button
-                class="block w-full text-left px-2 py-1 hover:bg-neutral-100 dark:hover:bg-slate-800 items-center cursor-pointer focus:bg-neutral-100 dark:focus:bg-slate-800 outline-none"
-                onclick={() => selectFilterItem(item, headerMenu.activeKey)}
-              >
-                <div class="flex flex-row items-center">
-                  <div class="min-w-3 text-xs">{#if selectedFilters.some(f => f.key === headerMenu.activeKey && f.value === item)}✓{/if}</div>
-                  <div class="truncate">{item}</div>
-                </div>
+              <button class="block w-full text-left px-2 py-1 hover:bg-neutral-100 dark:hover:bg-slate-800 items-center cursor-pointer focus:bg-neutral-100 dark:focus:bg-slate-800 outline-none" onclick={() => selectFilterItem(item, headerMenu.activeKey)}>
+                <div class="flex flex-row items-center"><div class="min-w-3 text-xs">{#if search.isFilterSelected(headerMenu.activeKey, item)}✓{/if}</div><div class="truncate">{item}</div></div>
               </button>
-            {:else}
-              <div class="px-2 py-1 text-neutral-500">No items found.</div>
-            {/each}
+            {:else}<div class="px-2 py-1 text-neutral-500">No items found.</div>{/each}
           </div>
         </div>
       {/if}
@@ -377,28 +304,19 @@
     style="top: {contextMenu.y}px; left: {contextMenu.x}px;"
     onclick={(e) => e.stopPropagation()}
   >
-    <button 
-      class="px-3 py-1.5 hover:bg-blue-50 dark:hover:bg-slate-700 text-left flex items-center gap-2 group"
-      onclick={handleEditAction}
-    >
+    <button class="px-3 py-1.5 hover:bg-blue-50 dark:hover:bg-slate-700 text-left flex items-center gap-2 group" onclick={handleEditAction}>
       <svg class="w-4 h-4 text-neutral-500 dark:text-neutral-400 group-hover:text-blue-600 dark:group-hover:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
       <span>Edit</span>
     </button>
     
     <div class="border-b border-neutral-200 dark:border-slate-700 my-1"></div>
     
-    <button 
-      class="px-3 py-1.5 hover:bg-blue-50 dark:hover:bg-slate-700 text-left flex items-center gap-2 group"
-      onclick={handleCopy}
-    >
+    <button class="px-3 py-1.5 hover:bg-blue-50 dark:hover:bg-slate-700 text-left flex items-center gap-2 group" onclick={handleCopy}>
       <svg class="w-4 h-4 text-neutral-500 dark:text-neutral-400 group-hover:text-blue-600 dark:group-hover:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
       <span>Copy</span>
     </button>
     
-    <button 
-      class="px-3 py-1.5 hover:bg-blue-50 dark:hover:bg-slate-700 text-left flex items-center gap-2 group"
-      onclick={handlePaste}
-    >
+    <button class="px-3 py-1.5 hover:bg-blue-50 dark:hover:bg-slate-700 text-left flex items-center gap-2 group" onclick={handlePaste}>
       <svg class="w-4 h-4 text-neutral-500 dark:text-neutral-400 group-hover:text-blue-600 dark:group-hover:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path></svg>
       <span>Paste</span>
     </button>
