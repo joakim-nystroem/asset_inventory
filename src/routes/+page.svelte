@@ -318,7 +318,7 @@
               <div
                 data-row={actualIndex}
                 data-col={j} 
-                onmousedown={() => selection.startSelection(actualIndex, j)}
+                onmousedown={(e) => selection.startSelection(actualIndex, j, e.shiftKey)}
                 onmouseenter={() => selection.extendSelection(actualIndex, j)}
                 oncontextmenu={(e) => handleContextMenu(e, i, j)}
                 class="

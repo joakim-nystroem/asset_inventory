@@ -72,16 +72,28 @@ export class SelectionManager {
   /**
    * Start a new selection (mouse down)
    */
-  startSelection(row: number, col: number) {
-    // Check if we are clicking the exact same single cell that is currently selected
+  /**
+   * Start a new selection (mouse down)
+   */
+  startSelection(row: number, col: number, expand: boolean = false) {
+    // Default assumption: We are starting a selection drag
+    this.isSelecting = true;
+
+    if (expand && this.start.row !== -1) {
+      this.end = { row, col };
+      this.updateOverlay();
+      return; 
+    }
+
     if (this.start.row === row && this.start.col === col && 
         this.end.row === row && this.end.col === col) {
       this.reset();
-      this.isSelecting = false; // Prevent dragging from immediately re-selecting
+      this.isSelecting = false; // Override default: don't drag-select on empty
       return;
     }
 
-    this.isSelecting = true;
+    // 3. Start New Selection (Default Fall-through)
+    // If we haven't returned yet, it's a standard new selection.
     this.start = { row, col };
     this.end = { row, col };
     this.updateOverlay();
