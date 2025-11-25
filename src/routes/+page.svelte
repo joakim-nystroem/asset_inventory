@@ -1,7 +1,6 @@
 <script lang="ts">
   // --- UTILS IMPORTS ---
   import { createKeyboardHandler } from '$lib/utils/keyboardHandler';
-  
   // --- STATE CLASSES ---
   import { ContextMenuState } from '$lib/utils/contextMenu.svelte';
   import { HistoryManager } from '$lib/utils/historyManager.svelte.js';
@@ -11,6 +10,7 @@
   import { SearchManager } from '$lib/utils/searchManager.svelte';
   import { SortManager } from '$lib/utils/sortManager.svelte';
   import { VirtualScrollManager } from '$lib/utils/virtualScrollManager.svelte';
+  import { ColumnWidthManager } from '$lib/utils/columnManager.svelte';
 
   // Initialize State Classes
   const contextMenu = new ContextMenuState();
@@ -21,9 +21,10 @@
   const search = new SearchManager();
   const sort = new SortManager();
   const virtualScroll = new VirtualScrollManager();
+  const columnManager = new ColumnWidthManager();
 
   let { data } = $props();
-
+  
   // --- Data State ---
   let assets: Record<string, any>[] = $state(data.assets);
   let keys: string[] = data.assets.length > 0 ? Object.keys(data.assets[0]) : [];
@@ -60,18 +61,14 @@
 
   // --- Sorting Logic ---
   async function applySort(key: string, dir: 'asc' | 'desc') {
-   
-    // Update state (this handles the toggle/reset logic internally)
     sort.update(key, dir);
-    
-    // Always apply: SortManager now handles falling back to 'id' automatically
     assets = await sort.applyAsync(assets);
-
     headerMenu.close();
   }
 
   // --- Clipboard Logic ---
   async function handleCopy() {
+    // Don't copy if editing
     await clipboard.copy(selection, assets, keys);
     if (contextMenu.visible) contextMenu.close();
   }
@@ -91,13 +88,13 @@
   }
 
   async function handlePaste() {
+    
     const target = getActionTarget();
     if (!target) return;
 
     const pasteSize = await clipboard.paste(target, assets, keys, history);
     
     if (contextMenu.visible) contextMenu.close();
-
     if (pasteSize) {
       const startRow = target.row;
       const startCol = target.col;
@@ -111,20 +108,43 @@
     }
   }
 
-  function handleEditAction() { 
-    contextMenu.close();
-  }
-
-  // --- Lifecycle ---
+  // --- Lifecycle & Window Events ---
   function onWindowClick(e: MouseEvent) {
     if (contextMenu.visible) contextMenu.close();
     headerMenu.handleOutsideClick(e);
   }
 
+  function onWindowMouseMove(e: MouseEvent) {
+    if (columnManager.resizingColumn) {
+      // Prevent default to stop text selection
+      e.preventDefault(); 
+      columnManager.updateResize(e.clientX);
+      
+      // Keep selection overlay in sync
+      if (selection.hasSelection()) {
+        selection.updateOverlay();
+      }
+    }
+  }
+
+  function onWindowMouseUp() {
+    if (columnManager.resizingColumn) {
+      console.log('[Page] Mouse Up - Ending Resize');
+      columnManager.endResize();
+      document.body.style.cursor = ''; // Reset cursor
+      
+      if (selection.hasSelection()) {
+        selection.updateOverlay();
+      }
+    }
+    selection.endSelection();
+  }
+
   $effect(() => {
     window.addEventListener('click', onWindowClick);
     window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('mouseup', () => selection.endSelection());
+    window.addEventListener('mousemove', onWindowMouseMove);
+    window.addEventListener('mouseup', onWindowMouseUp);
     
     if (scrollContainer) {
       const resizeObserver = new ResizeObserver((entries) => {
@@ -137,15 +157,17 @@
       return () => {
         window.removeEventListener('click', onWindowClick);
         window.removeEventListener('keydown', handleKeyDown);
-        window.removeEventListener('mouseup', () => selection.endSelection());
+        window.removeEventListener('mousemove', onWindowMouseMove);
+        window.removeEventListener('mouseup', onWindowMouseUp);
         resizeObserver.disconnect();
       };
     }
     
     return () => {
-      window.removeEventListener('click', onWindowClick);
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('mouseup', () => selection.endSelection());
+        window.removeEventListener('click', onWindowClick);
+        window.removeEventListener('keydown', handleKeyDown);
+        window.removeEventListener('mousemove', onWindowMouseMove);
+        window.removeEventListener('mouseup', onWindowMouseUp);
     };
   });
 
@@ -162,6 +184,7 @@
   });
 </script>
 
+<!-- Header / Filter UI -->
 <div class="flex flex-row gap-4 items-center mb-2">
   <h2 class="text-lg font-bold whitespace-nowrap">Asset Master</h2>
   <div class="flex gap-4 items-center">
@@ -195,19 +218,22 @@
   </div>
 </div>
 
+<!-- Main Grid -->
 {#if assets.length > 0}
   <div 
     bind:this={scrollContainer}
     onscroll={(e) => virtualScroll.handleScroll(e)}
-    class="rounded-lg border border-neutral-200 dark:border-slate-700 bg-white dark:bg-slate-800 overflow-auto h-[calc(100dvh-9.3rem)] shadow-md relative select-none"
+    class="rounded-lg border border-neutral-200 dark:border-slate-700 bg-white dark:bg-slate-800 overflow-auto h-[calc(100dvh-9.3rem)] shadow-md relative select-none focus:outline-none"
+    tabindex="-1"
   >
     <div class="w-max min-w-full bg-white dark:bg-slate-800 text-left relative" style="height: {virtualScroll.getTotalHeight(assets.length)}px;">
       
+      <!-- Header Row -->
       <div class="sticky top-0 z-20 flex border-b border-neutral-200 dark:border-slate-600 bg-neutral-50 dark:bg-slate-700">
         {#each keys as key}
           <div 
             class="header-interactive relative group border-r border-neutral-200 dark:border-slate-600 last:border-r-0"
-            style="width: 150px; min-width: 150px;"
+            style="width: {columnManager.getWidth(key)}px; min-width: {columnManager.getWidth(key)}px;"
           >
             <button
               class="w-full h-full px-2 py-2 text-xs font-medium text-neutral-900 dark:text-neutral-100 uppercase hover:bg-neutral-100 dark:hover:bg-slate-600 text-left flex items-center justify-between focus:outline-none focus:bg-neutral-200 dark:focus:bg-slate-500 cursor-pointer"
@@ -222,14 +248,31 @@
                 {/if}
               </span>
             </button>
+
+            <!-- Resize Handle -->
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div 
+                class="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-400 z-50"
+                onmousedown={(e) => {
+                    console.log('Resize handle mousedown');
+                    e.preventDefault();
+                    e.stopPropagation();
+                    document.body.style.cursor = 'col-resize';
+                    columnManager.startResize(key, e.clientX);
+                }}
+                onclick={(e) => e.stopPropagation()} 
+            ></div>
           </div>
         {/each}
       </div>
 
+      <!-- Body Rows -->
       <div class="absolute w-full" style="transform: translateY({virtualScroll.getOffsetY()}px);">
+        <!-- Selection Overlays -->
         {#if selection.copyOverlay.visible}
             <div
-            class="absolute pointer-events-none z-20 border-2 border-dotted border-blue-600 dark:border-blue-500"
+             class="absolute pointer-events-none z-20 border-2 border-dotted border-blue-600 dark:border-blue-500"
             style="
                 top: {selection.copyOverlay.top}px;
                 left: {selection.copyOverlay.left}px; 
@@ -251,27 +294,31 @@
             ></div>
         {/if}
 
+        <!-- Data Items -->
         {#each visibleData.items as asset, i (asset.id || (visibleData.startIndex + i))}
           {@const actualIndex = visibleData.startIndex + i}
           <div class="flex border-b border-neutral-200 dark:border-slate-700 hover:bg-blue-50 dark:hover:bg-slate-700 transition-colors">
             {#each keys as key, j} 
-              <!-- svelte-ignore a11y_no_static_element_interactions -->
-              <div
-                data-row={actualIndex}
-                data-col={j} 
-                onmousedown={() => selection.startSelection(actualIndex, j)}
-                onmouseenter={() => selection.extendSelection(actualIndex, j)}
-                oncontextmenu={(e) => handleContextMenu(e, i, j)}
-                class="
-                  h-8 px-2 flex items-center text-xs whitespace-nowrap overflow-hidden text-ellipsis cursor-cell
-                  text-neutral-700 dark:text-neutral-200 
-                  hover:bg-blue-100 dark:hover:bg-slate-600
-                  border-r border-neutral-200 dark:border-slate-700 last:border-r-0
-                "
-                style="width: 150px; min-width: 150px;"
-              >
-                {asset[key]}
-              </div>
+
+                <!-- DISPLAY MODE -->
+                <!-- svelte-ignore a11y_no_static_element_interactions -->
+                <!-- svelte-ignore a11y_click_events_have_key_events -->
+                <div
+                  data-row={actualIndex}
+                  data-col={j} 
+                  onmousedown={() => selection.startSelection(actualIndex, j)}
+                  onmouseenter={() => selection.extendSelection(actualIndex, j)}
+                  oncontextmenu={(e) => handleContextMenu(e, i, j)}
+                  class="
+                    h-8 px-2 flex items-center text-xs whitespace-nowrap overflow-hidden text-ellipsis cursor-cell
+                    text-neutral-700 dark:text-neutral-200 
+                    hover:bg-blue-100 dark:hover:bg-slate-600
+                    border-r border-neutral-200 dark:border-slate-700 last:border-r-0
+                  "
+                  style="width: {columnManager.getWidth(key)}px; min-width: {columnManager.getWidth(key)}px;"
+                >
+                  {asset[key]}
+                </div>
             {/each}
           </div>
         {/each}
@@ -285,6 +332,7 @@
   <p>Query successful, but no data was returned.</p>
 {/if}
 
+<!-- Popups (Header Menu & Context Menu) -->
 {#if headerMenu.activeKey}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -334,7 +382,7 @@
               <button 
                 class="px-3 py-1.5 hover:bg-blue-50 dark:hover:bg-slate-700 text-left flex items-center gap-2 group w-full" 
                 onclick={() => { 
-                  search.selectFilterItem(item, headerMenu.activeKey, assets); 
+                  search.selectFilterItem(item, headerMenu.activeKey, assets);
                   headerMenu.close(); 
                 }}
               >
@@ -357,11 +405,12 @@
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
-    class="fixed z-[60] bg-white dark:bg-slate-800 border border-neutral-300 dark:border-slate-700 rounded shadow-xl py-1 text-sm text-neutral-900 dark:text-neutral-100 min-w-32 cursor-default text-left flex flex-col"
+    class="fixed z-[60] bg-white dark:bg-slate-800 border border-neutral-300 
+    dark:border-slate-700 rounded shadow-xl py-1 text-sm text-neutral-900 dark:text-neutral-100 min-w-32 cursor-default text-left flex flex-col"
     style="top: {contextMenu.y}px; left: {contextMenu.x}px;"
     onclick={(e) => e.stopPropagation()}
   >
-    <button class="px-3 py-1.5 hover:bg-blue-50 dark:hover:bg-slate-700 text-left flex items-center gap-2 group" onclick={handleEditAction}>
+    <button class="px-3 py-1.5 hover:bg-blue-50 dark:hover:bg-slate-700 text-left flex items-center gap-2 group">
       <svg class="w-4 h-4 text-neutral-500 dark:text-neutral-400 group-hover:text-blue-600 dark:group-hover:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
       <span>Edit</span>
     </button>
@@ -375,7 +424,8 @@
     </button>
     
     <button class="px-3 py-1.5 hover:bg-blue-50 dark:hover:bg-slate-700 text-left flex items-center gap-2 group" onclick={handlePaste}>
-      <svg class="w-4 h-4 text-neutral-500 dark:text-neutral-400 group-hover:text-blue-600 dark:group-hover:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 
+      <svg class="w-4 h-4 text-neutral-500 dark:text-neutral-400 group-hover:text-blue-600 dark:group-hover:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 
+        0 00-2 2v12a2 2 0 002 2h10a2 2 
         0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path></svg>
       <span>Paste</span>
     </button>

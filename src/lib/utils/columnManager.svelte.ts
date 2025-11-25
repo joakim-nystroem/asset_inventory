@@ -1,11 +1,12 @@
 // $lib/utils/columnWidthManager.svelte.ts
+import { SvelteMap } from 'svelte/reactivity';
 
 export class ColumnWidthManager {
   // Default width for all columns
   private defaultWidth = 150;
   
-  // Store widths per column key
-  private widths = $state<Map<string, number>>(new Map());
+  // Store widths per column key - Using SvelteMap for granular reactivity
+  private widths = new SvelteMap<string, number>();
   
   // Currently resizing column
   resizingColumn = $state<string | null>(null);
@@ -33,6 +34,7 @@ export class ColumnWidthManager {
    * Start resizing a column
    */
   startResize(key: string, startX: number) {
+    console.log(`[ColumnManager] Start resize: ${key} at X=${startX}`);
     this.resizingColumn = key;
     this.startX = startX;
     this.startWidth = this.getWidth(key);
@@ -46,6 +48,8 @@ export class ColumnWidthManager {
     
     const delta = currentX - this.startX;
     const newWidth = this.startWidth + delta;
+    
+    console.log(`[ColumnManager] Resizing ${this.resizingColumn}: delta=${delta}, newWidth=${newWidth}`);
     this.setWidth(this.resizingColumn, newWidth);
   }
 
@@ -53,6 +57,9 @@ export class ColumnWidthManager {
    * End resize
    */
   endResize() {
+    if (this.resizingColumn) {
+        console.log(`[ColumnManager] End resize: ${this.resizingColumn}`);
+    }
     this.resizingColumn = null;
   }
 
@@ -71,7 +78,10 @@ export class ColumnWidthManager {
       const stored = localStorage.getItem(storageKey);
       if (stored) {
         const parsed = JSON.parse(stored);
-        this.widths = new Map(Object.entries(parsed));
+        // Re-populate SvelteMap
+        for (const [key, value] of Object.entries(parsed)) {
+            this.widths.set(key, Number(value));
+        }
       }
     } catch (err) {
       console.error('Failed to load column widths:', err);
@@ -83,7 +93,8 @@ export class ColumnWidthManager {
    */
   saveToStorage(storageKey: string) {
     try {
-      const obj = Object.fromEntries(this.widths);
+      // Convert SvelteMap to standard object for JSON
+      const obj = Object.fromEntries(this.widths.entries());
       localStorage.setItem(storageKey, JSON.stringify(obj));
     } catch (err) {
       console.error('Failed to save column widths:', err);
@@ -94,6 +105,6 @@ export class ColumnWidthManager {
    * Get all widths as an object (for debugging or export)
    */
   getAllWidths(): Record<string, number> {
-    return Object.fromEntries(this.widths);
+    return Object.fromEntries(this.widths.entries());
   }
 }
