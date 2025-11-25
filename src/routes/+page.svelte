@@ -9,7 +9,7 @@
   import { SelectionManager } from '$lib/utils/selectionManager.svelte';
   import { ClipboardManager } from '$lib/utils/clipboardManager.svelte';
   import { SearchManager } from '$lib/utils/searchManager.svelte';
-  import { SortManager } from '$lib/utils/sortManager.svelte'; 
+  import { SortManager } from '$lib/utils/sortManager.svelte';
   import { VirtualScrollManager } from '$lib/utils/virtualScrollManager.svelte';
 
   // Initialize State Classes
@@ -53,7 +53,6 @@
   // --- Search Logic ---
   async function handleSearch() {
     const result = await search.search(data.assets);
-    // Always update assets with search results
     assets = result;
     selection.reset();
     sort.invalidateCache();
@@ -65,8 +64,10 @@
     isSorting = true;
     sort.update(key, dir);
     
-    // Use async sorting to avoid blocking UI
-    assets = await sort.applyAsync(assets);
+    // Only sort if sort is active (not reset)
+    if (sort.key) {
+      assets = await sort.applyAsync(assets);
+    }
     
     isSorting = false;
     headerMenu.close();
@@ -96,25 +97,19 @@
     const target = getActionTarget();
     if (!target) return;
 
-    // Paste returns the size of the pasted block
     const pasteSize = await clipboard.paste(target, assets, keys, history);
     
     if (contextMenu.visible) contextMenu.close();
 
     if (pasteSize) {
-      // Calculate new selection bounds, clamped to grid size
       const startRow = target.row;
       const startCol = target.col;
       const endRow = Math.min(startRow + pasteSize.rows - 1, assets.length - 1);
       const endCol = Math.min(startCol + pasteSize.cols - 1, keys.length - 1);
 
       selection.reset();
-      
-      // Set the selection programmatically
       selection.startSelection(startRow, startCol);
       selection.extendSelection(endRow, endCol);
-      
-      // Stop "selecting" mode so mouse movement doesn't continue the selection
       selection.endSelection();
     }
   }
@@ -134,7 +129,6 @@
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('mouseup', () => selection.endSelection());
     
-    // Measure container height on mount/resize
     if (scrollContainer) {
       const resizeObserver = new ResizeObserver((entries) => {
         for (const entry of entries) {
@@ -159,16 +153,15 @@
   });
 
   $effect(() => { 
-    // Reactive dependencies
     search.term;
     search.selectedFilters;
     handleSearch(); 
   })
 
   $effect(() => {
-    // Cleanup cache when assets change
     assets; 
     search.cleanupFilterCache();
+    sort.invalidateCache();
   });
 </script>
 
@@ -198,9 +191,6 @@
       {/each}
     </div>
     <div class="flex gap-2 items-center">
-      {#if isSorting}
-        <span class="text-xs text-neutral-500 dark:text-neutral-400 animate-pulse">Sorting...</span>
-      {/if}
       {#if search.getFilterCount() > 0}
         <button onclick={() => search.clearAllFilters()} class="cursor-pointer bg-red-600 hover:bg-red-700 px-2 py-1 text-neutral-100">Clear</button>
       {/if}

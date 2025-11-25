@@ -1,5 +1,30 @@
 // src/lib/utils/sortManager.svelte.ts
-import { sortData, type SortDirection } from './sort';
+
+export type SortDirection = 'asc' | 'desc';
+
+/**
+ * Sort data by a key and direction
+ */
+function sortData<T>(list: T[], key: keyof T, dir: SortDirection): T[] {
+  const direction = dir === 'asc' ? 1 : -1;
+
+  return [...list].sort((a, b) => {
+    const valA = a[key];
+    const valB = b[key];
+
+    // Null handling: Push nulls to the end
+    if (valA == null) return 1;
+    if (valB == null) return -1;
+
+    // Number sorting
+    if (typeof valA === 'number' && typeof valB === 'number') {
+      return (valA - valB) * direction;
+    }
+
+    // String/Default sorting
+    return String(valA).localeCompare(String(valB)) * direction;
+  });
+}
 
 export class SortManager {
   // State
@@ -8,7 +33,7 @@ export class SortManager {
   
   // Cache sorted results to avoid re-sorting
   private cache = new Map<string, any[]>();
-  private originalOrder: any[] = [];
+  private lastDataRef: any[] = [];
 
   /**
    * Generate cache key for current sort state
@@ -18,12 +43,12 @@ export class SortManager {
   }
 
   /**
-   * Update sort state
+   * Update sort state and toggle if same column
    */
   update(columnKey: string, dir: SortDirection) {
+    // If clicking the same column with same direction, clear sort
     if (this.key === columnKey && this.direction === dir) {
-      this.key = 'id';
-      this.direction = 'asc';
+      this.reset();
     } else {
       this.key = columnKey;
       this.direction = dir;
@@ -37,17 +62,44 @@ export class SortManager {
     this.key = '';
     this.direction = 'asc';
     this.cache.clear();
-    this.originalOrder = [];
+    this.lastDataRef = [];
   }
 
   /**
-   * Apply sort asynchronously with caching
+   * Apply sort synchronously with caching
+   */
+  apply(data: any[]): any[] {
+    // If data reference changed, invalidate cache
+    if (this.lastDataRef !== data) {
+      this.cache.clear();
+      this.lastDataRef = data;
+    }
+
+    // If no key is set, return data as-is
+    if (!this.key) return data;
+
+    const cacheKey = this.getCacheKey();
+    
+    // Check cache first
+    if (this.cache.has(cacheKey)) {
+      return this.cache.get(cacheKey)!;
+    }
+
+    // Sort and cache
+    const sorted = sortData(data, this.key as any, this.direction);
+    this.cache.set(cacheKey, sorted);
+    
+    return sorted;
+  }
+
+  /**
+   * Apply sort asynchronously to avoid blocking UI
    */
   async applyAsync(data: any[]): Promise<any[]> {
-    // Store original order for cache invalidation
-    if (this.originalOrder.length === 0 || this.originalOrder !== data) {
-      this.originalOrder = data;
+    // If data reference changed, invalidate cache
+    if (this.lastDataRef !== data) {
       this.cache.clear();
+      this.lastDataRef = data;
     }
 
     // If no key is set, return data as-is
@@ -62,7 +114,6 @@ export class SortManager {
 
     // Perform sort asynchronously to avoid blocking UI
     const sorted = await new Promise<any[]>((resolve) => {
-      // Use setTimeout to yield to the browser
       setTimeout(() => {
         const result = sortData(data, this.key as any, this.direction);
         resolve(result);
@@ -76,30 +127,27 @@ export class SortManager {
   }
 
   /**
-   * Synchronous apply (for compatibility)
-   */
-  apply(data: any[]): any[] {
-    if (!this.key) return data;
-    
-    const cacheKey = this.getCacheKey();
-    
-    // Check cache
-    if (this.cache.has(cacheKey)) {
-      return this.cache.get(cacheKey)!;
-    }
-
-    // Sort and cache
-    const sorted = sortData(data, this.key as any, this.direction);
-    this.cache.set(cacheKey, sorted);
-    
-    return sorted;
-  }
-
-  /**
-   * Clear cache when data changes
+   * Clear cache manually
    */
   invalidateCache() {
     this.cache.clear();
-    this.originalOrder = [];
+    this.lastDataRef = [];
+  }
+
+  /**
+   * Check if a column is currently sorted
+   */
+  isActive(columnKey: string): boolean {
+    return this.key === columnKey;
+  }
+
+  /**
+   * Get current sort state for a column
+   */
+  getState(columnKey: string): { active: boolean; direction: SortDirection } {
+    return {
+      active: this.key === columnKey,
+      direction: this.direction
+    };
   }
 }

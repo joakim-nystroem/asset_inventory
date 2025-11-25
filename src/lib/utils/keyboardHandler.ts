@@ -45,9 +45,6 @@ export function createKeyboardHandler(
   getGridSize: () => { rows: number; cols: number }
 ) {
   return function handleKeyDown(e: KeyboardEvent) {
-    // --- CRITICAL FIX ---
-    // Check if the event target is an input field. 
-    // If so, return early to let the browser handle native typing/pasting.
     const target = e.target as HTMLElement;
     const isInput = target.tagName === 'INPUT' || 
                     target.tagName === 'TEXTAREA' || 
