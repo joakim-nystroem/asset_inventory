@@ -68,7 +68,6 @@
 
   // --- Clipboard Logic ---
   async function handleCopy() {
-    // Don't copy if editing
     await clipboard.copy(selection, assets, keys);
     if (contextMenu.visible) contextMenu.close();
   }
@@ -88,7 +87,6 @@
   }
 
   async function handlePaste() {
-    
     const target = getActionTarget();
     if (!target) return;
 
@@ -106,6 +104,10 @@
       selection.extendSelection(endRow, endCol);
       selection.endSelection();
     }
+  }
+
+  function handleEditAction() { 
+    contextMenu.close();
   }
 
   // --- Lifecycle & Window Events ---
@@ -262,6 +264,10 @@
                     columnManager.startResize(key, e.clientX);
                 }}
                 onclick={(e) => e.stopPropagation()} 
+                ondblclick={(e) => {
+                    e.stopPropagation();
+                    columnManager.resetWidth(key);
+                }}
             ></div>
           </div>
         {/each}
@@ -299,26 +305,25 @@
           {@const actualIndex = visibleData.startIndex + i}
           <div class="flex border-b border-neutral-200 dark:border-slate-700 hover:bg-blue-50 dark:hover:bg-slate-700 transition-colors">
             {#each keys as key, j} 
-
-                <!-- DISPLAY MODE -->
-                <!-- svelte-ignore a11y_no_static_element_interactions -->
-                <!-- svelte-ignore a11y_click_events_have_key_events -->
-                <div
-                  data-row={actualIndex}
-                  data-col={j} 
-                  onmousedown={() => selection.startSelection(actualIndex, j)}
-                  onmouseenter={() => selection.extendSelection(actualIndex, j)}
-                  oncontextmenu={(e) => handleContextMenu(e, i, j)}
-                  class="
-                    h-8 px-2 flex items-center text-xs whitespace-nowrap overflow-hidden text-ellipsis cursor-cell
-                    text-neutral-700 dark:text-neutral-200 
-                    hover:bg-blue-100 dark:hover:bg-slate-600
-                    border-r border-neutral-200 dark:border-slate-700 last:border-r-0
-                  "
-                  style="width: {columnManager.getWidth(key)}px; min-width: {columnManager.getWidth(key)}px;"
-                >
-                  {asset[key]}
-                </div>
+              <!-- DISPLAY MODE -->
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <!-- svelte-ignore a11y_click_events_have_key_events -->
+              <div
+                data-row={actualIndex}
+                data-col={j} 
+                onmousedown={() => selection.startSelection(actualIndex, j)}
+                onmouseenter={() => selection.extendSelection(actualIndex, j)}
+                oncontextmenu={(e) => handleContextMenu(e, i, j)}
+                class="
+                  h-8 px-2 flex items-center text-xs whitespace-nowrap overflow-hidden text-ellipsis cursor-cell
+                  text-neutral-700 dark:text-neutral-200 
+                  hover:bg-blue-100 dark:hover:bg-slate-600
+                  border-r border-neutral-200 dark:border-slate-700 last:border-r-0
+                "
+                style="width: {columnManager.getWidth(key)}px; min-width: {columnManager.getWidth(key)}px;"
+              >
+                {asset[key]}
+              </div>
             {/each}
           </div>
         {/each}
@@ -410,7 +415,7 @@
     style="top: {contextMenu.y}px; left: {contextMenu.x}px;"
     onclick={(e) => e.stopPropagation()}
   >
-    <button class="px-3 py-1.5 hover:bg-blue-50 dark:hover:bg-slate-700 text-left flex items-center gap-2 group">
+    <button class="px-3 py-1.5 hover:bg-blue-50 dark:hover:bg-slate-700 text-left flex items-center gap-2 group" onclick={handleEditAction}>
       <svg class="w-4 h-4 text-neutral-500 dark:text-neutral-400 group-hover:text-blue-600 dark:group-hover:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
       <span>Edit</span>
     </button>

@@ -31,6 +31,13 @@ export class ColumnWidthManager {
   }
 
   /**
+   * Reset a specific column width to default
+   */
+  resetWidth(key: string) {
+    this.widths.delete(key);
+  }
+
+  /**
    * Start resizing a column
    */
   startResize(key: string, startX: number) {
