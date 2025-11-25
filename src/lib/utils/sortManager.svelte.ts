@@ -30,6 +30,7 @@ export class SortManager {
   // State
   key = $state('');
   direction = $state<SortDirection>('asc');
+  defaultKey = 'id'; // [UPDATED] Default sort key
   
   // Cache sorted results to avoid re-sorting
   private cache = new Map<string, any[]>();
@@ -38,15 +39,14 @@ export class SortManager {
   /**
    * Generate cache key for current sort state
    */
-  private getCacheKey(): string {
-    return `${this.key}-${this.direction}`;
+  private getCacheKey(key: string, dir: string): string {
+    return `${key}-${dir}`;
   }
 
   /**
    * Update sort state and toggle if same column
    */
   update(columnKey: string, dir: SortDirection) {
-    // If clicking the same column with same direction, clear sort
     if (this.key === columnKey && this.direction === dir) {
       this.reset();
     } else {
@@ -55,9 +55,6 @@ export class SortManager {
     }
   }
 
-  /**
-   * Clear sort state (e.g. on new search)
-   */
   reset() {
     this.key = '';
     this.direction = 'asc';
@@ -69,24 +66,24 @@ export class SortManager {
    * Apply sort synchronously with caching
    */
   apply(data: any[]): any[] {
-    // If data reference changed, invalidate cache
     if (this.lastDataRef !== data) {
       this.cache.clear();
       this.lastDataRef = data;
     }
 
-    // If no key is set, return data as-is
-    if (!this.key) return data;
+    // [UPDATED] Determine effective key (Active OR Default)
+    const effectiveKey = this.key || this.defaultKey;
+    const effectiveDir = this.key ? this.direction : 'asc'; // Default to ASC for default key
 
-    const cacheKey = this.getCacheKey();
+    if (!effectiveKey) return data;
+
+    const cacheKey = this.getCacheKey(effectiveKey, effectiveDir);
     
-    // Check cache first
     if (this.cache.has(cacheKey)) {
       return this.cache.get(cacheKey)!;
     }
 
-    // Sort and cache
-    const sorted = sortData(data, this.key as any, this.direction);
+    const sorted = sortData(data, effectiveKey as any, effectiveDir);
     this.cache.set(cacheKey, sorted);
     
     return sorted;
@@ -96,54 +93,45 @@ export class SortManager {
    * Apply sort asynchronously to avoid blocking UI
    */
   async applyAsync(data: any[]): Promise<any[]> {
-    // If data reference changed, invalidate cache
     if (this.lastDataRef !== data) {
       this.cache.clear();
       this.lastDataRef = data;
     }
 
-    // If no key is set, return data as-is
-    if (!this.key) return data;
+    // [UPDATED] Determine effective key (Active OR Default)
+    const effectiveKey = this.key || this.defaultKey;
+    const effectiveDir = this.key ? this.direction : 'asc'; 
 
-    const cacheKey = this.getCacheKey();
+    if (!effectiveKey) return data;
+
+    const cacheKey = this.getCacheKey(effectiveKey, effectiveDir);
     
-    // Check cache first
     if (this.cache.has(cacheKey)) {
       return this.cache.get(cacheKey)!;
     }
 
-    // Perform sort asynchronously to avoid blocking UI
     const sorted = await new Promise<any[]>((resolve) => {
       setTimeout(() => {
-        const result = sortData(data, this.key as any, this.direction);
+        const result = sortData(data, effectiveKey as any, effectiveDir);
         resolve(result);
       }, 0);
     });
 
-    // Cache the result
     this.cache.set(cacheKey, sorted);
     
     return sorted;
   }
 
-  /**
-   * Clear cache manually
-   */
+  // ... rest of the class (invalidateCache, isActive, etc.) remains the same
   invalidateCache() {
     this.cache.clear();
     this.lastDataRef = [];
   }
 
-  /**
-   * Check if a column is currently sorted
-   */
   isActive(columnKey: string): boolean {
     return this.key === columnKey;
   }
 
-  /**
-   * Get current sort state for a column
-   */
   getState(columnKey: string): { active: boolean; direction: SortDirection } {
     return {
       active: this.key === columnKey,

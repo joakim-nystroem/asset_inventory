@@ -28,7 +28,6 @@
   let assets: Record<string, any>[] = $state(data.assets);
   let keys: string[] = data.assets.length > 0 ? Object.keys(data.assets[0]) : [];
   let scrollContainer: HTMLDivElement | null = $state(null);
-  let isSorting = $state(false);
 
   // Get visible items for rendering
   const visibleData = $derived(virtualScroll.getVisibleItems(assets));
@@ -61,15 +60,13 @@
 
   // --- Sorting Logic ---
   async function applySort(key: string, dir: 'asc' | 'desc') {
-    isSorting = true;
+   
+    // Update state (this handles the toggle/reset logic internally)
     sort.update(key, dir);
     
-    // Only sort if sort is active (not reset)
-    if (sort.key) {
-      assets = await sort.applyAsync(assets);
-    }
-    
-    isSorting = false;
+    // Always apply: SortManager now handles falling back to 'id' automatically
+    assets = await sort.applyAsync(assets);
+
     headerMenu.close();
   }
 
