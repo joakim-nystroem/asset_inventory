@@ -267,6 +267,13 @@
                 ondblclick={(e) => {
                     e.stopPropagation();
                     columnManager.resetWidth(key);
+                    // [FIX] Update selection overlay after reset
+                    // We use setTimeout to allow one render cycle for the DOM to update widths
+                    setTimeout(() => {
+                      if (selection.hasSelection()) {
+                        selection.updateOverlay();
+                      }
+                    }, 0);
                 }}
             ></div>
           </div>
@@ -315,14 +322,16 @@
                 onmouseenter={() => selection.extendSelection(actualIndex, j)}
                 oncontextmenu={(e) => handleContextMenu(e, i, j)}
                 class="
-                  h-8 px-2 flex items-center text-xs whitespace-nowrap overflow-hidden text-ellipsis cursor-cell
+                  h-8 px-2 flex items-center text-xs cursor-cell
                   text-neutral-700 dark:text-neutral-200 
                   hover:bg-blue-100 dark:hover:bg-slate-600
                   border-r border-neutral-200 dark:border-slate-700 last:border-r-0
                 "
                 style="width: {columnManager.getWidth(key)}px; min-width: {columnManager.getWidth(key)}px;"
               >
-                {asset[key]}
+                <span class="truncate w-full">
+                  {asset[key]}
+                </span>
               </div>
             {/each}
           </div>
