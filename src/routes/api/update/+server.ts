@@ -1,5 +1,5 @@
 import { json, error as svelteError } from '@sveltejs/kit';
-import { db } from '$lib/server/db';
+import { db } from '$lib/server/db/db';
 import type { RequestHandler } from './$types';
 
 export const PUT: RequestHandler = async ({ request }) => {

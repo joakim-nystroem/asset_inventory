@@ -1,7 +1,5 @@
-// $lib/utils/searchManager.svelte.ts
-
+// $lib/utils/data/searchManager.svelte.ts
 import { SvelteMap } from "svelte/reactivity";
-import { getUniqueValues, toggleFilter, removeFilter } from './filter';
 
 export type Filter = {
   key: string;
@@ -135,4 +133,30 @@ export class SearchManager {
   getFilterCount(): number {
     return this.selectedFilters.length;
   }
+}
+
+// --- Internal Helper Functions (Formerly filter.ts) ---
+
+function getUniqueValues<T>(data: T[], key: keyof T): string[] {
+  const values = data
+    .map((item) => item[key])
+    .filter((val) => val != null && val !== ''); 
+
+  return [...new Set(values)].sort().map(String);
+}
+
+function toggleFilter(currentFilters: Filter[], key: string, value: string): Filter[] {
+  const exists = currentFilters.some(f => f.key === key && f.value === value);
+
+  if (exists) {
+    // Return list WITHOUT the item
+    return currentFilters.filter(f => !(f.key === key && f.value === value));
+  } else {
+    // Return list WITH the item
+    return [...currentFilters, { key, value }];
+  }
+}
+
+function removeFilter(currentFilters: Filter[], filterToRemove: Filter): Filter[] {
+  return currentFilters.filter(item => item !== filterToRemove);
 }

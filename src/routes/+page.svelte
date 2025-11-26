@@ -1,16 +1,19 @@
 <script lang="ts">
   // --- UTILS IMPORTS ---
-  import { createKeyboardHandler } from '$lib/utils/keyboardHandler';
+  // [UPDATED] Import the new unified handler
+  import { createInteractionHandler } from '$lib/utils/interaction/interactionHandler';
+  
   // --- STATE CLASSES ---
-  import { ContextMenuState } from '$lib/utils/contextMenu.svelte';
-  import { HistoryManager } from '$lib/utils/historyManager.svelte.js';
-  import { HeaderMenuState } from '$lib/utils/menu.svelte';
-  import { SelectionManager } from '$lib/utils/selectionManager.svelte';
-  import { ClipboardManager } from '$lib/utils/clipboardManager.svelte';
-  import { SearchManager } from '$lib/utils/searchManager.svelte';
-  import { SortManager } from '$lib/utils/sortManager.svelte';
-  import { VirtualScrollManager } from '$lib/utils/virtualScrollManager.svelte';
-  import { ColumnWidthManager } from '$lib/utils/columnManager.svelte';
+  // [UPDATED] Imports based on the new folder structure
+  import { ContextMenuState } from '$lib/utils/ui/contextMenu.svelte';
+  import { HistoryManager } from '$lib/utils/interaction/historyManager.svelte';
+  import { HeaderMenuState } from '$lib/utils/ui/headerMenu.svelte'
+  import { SelectionManager } from '$lib/utils/interaction/selectionManager.svelte';
+  import { ClipboardManager } from '$lib/utils/interaction/clipboardManager.svelte';
+  import { SearchManager } from '$lib/utils/data/searchManager.svelte';
+  import { SortManager } from '$lib/utils/data/sortManager.svelte';
+  import { VirtualScrollManager } from '$lib/utils/core/virtualScrollManager.svelte';
+  import { ColumnWidthManager } from '$lib/utils/core/columnManager.svelte';
 
   // Initialize State Classes
   const contextMenu = new ContextMenuState();
@@ -27,15 +30,22 @@
   
   // --- Data State ---
   let assets: Record<string, any>[] = $state(data.assets);
+  let locations: Record<string, any>[] = $state(data.locations || []);
+  
   let keys: string[] = data.assets.length > 0 ? Object.keys(data.assets[0]) : [];
   let scrollContainer: HTMLDivElement | null = $state(null);
 
   // Get visible items for rendering
   const visibleData = $derived(virtualScroll.getVisibleItems(assets));
 
-  // --- Keyboard Handler ---
-  const handleKeyDown = createKeyboardHandler(
-    selection,
+  // --- Interaction Handler (Keyboard & Mouse) ---
+  const mountInteraction = createInteractionHandler(
+    {
+      selection,
+      columnManager,
+      contextMenu,
+      headerMenu
+    },
     {
       onCopy: handleCopy,
       onPaste: handlePaste,
@@ -45,9 +55,9 @@
         selection.resetAll();
         clipboard.clear();
         if (contextMenu.visible) contextMenu.close();
-      }
-    },
-    () => ({ rows: assets.length, cols: keys.length })
+      },
+      getGridSize: () => ({ rows: assets.length, cols: keys.length })
+    }
   );
 
   // --- Search Logic ---
@@ -112,65 +122,25 @@
   }
 
   // --- Lifecycle & Window Events ---
-  function onWindowClick(e: MouseEvent) {
-    if (contextMenu.visible) contextMenu.close();
-    headerMenu.handleOutsideClick(e);
-  }
-
-  function onWindowMouseMove(e: MouseEvent) {
-    if (columnManager.resizingColumn) {
-      // Prevent default to stop text selection
-      e.preventDefault(); 
-      columnManager.updateResize(e.clientX);
-      
-      // Keep selection overlay in sync
-      if (selection.hasSelection()) {
-        selection.updateOverlay();
-      }
-    }
-  }
-
-  function onWindowMouseUp() {
-    if (columnManager.resizingColumn) {
-      console.log('[Page] Mouse Up - Ending Resize');
-      columnManager.endResize();
-      document.body.style.cursor = ''; // Reset cursor
-      
-      if (selection.hasSelection()) {
-        selection.updateOverlay();
-      }
-    }
-    selection.endSelection();
-  }
-
+  
   $effect(() => {
-    window.addEventListener('click', onWindowClick);
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('mousemove', onWindowMouseMove);
-    window.addEventListener('mouseup', onWindowMouseUp);
+    // [UPDATED] Mount the unified interaction handler
+    const cleanupInteraction = mountInteraction(window);
     
+    // Resize Observer for Virtual Scroll
+    let resizeObserver: ResizeObserver | null = null;
     if (scrollContainer) {
-      const resizeObserver = new ResizeObserver((entries) => {
+      resizeObserver = new ResizeObserver((entries) => {
         for (const entry of entries) {
           virtualScroll.updateContainerHeight(entry.contentRect.height);
         }
       });
       resizeObserver.observe(scrollContainer);
-     
-      return () => {
-        window.removeEventListener('click', onWindowClick);
-        window.removeEventListener('keydown', handleKeyDown);
-        window.removeEventListener('mousemove', onWindowMouseMove);
-        window.removeEventListener('mouseup', onWindowMouseUp);
-        resizeObserver.disconnect();
-      };
     }
     
     return () => {
-        window.removeEventListener('click', onWindowClick);
-        window.removeEventListener('keydown', handleKeyDown);
-        window.removeEventListener('mousemove', onWindowMouseMove);
-        window.removeEventListener('mouseup', onWindowMouseUp);
+        cleanupInteraction();
+        if (resizeObserver) resizeObserver.disconnect();
     };
   });
 
@@ -258,7 +228,6 @@
             <div 
                 class="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-400 z-50"
                 onmousedown={(e) => {
-                    console.log('Resize handle mousedown');
                     e.preventDefault();
                     e.stopPropagation();
                     document.body.style.cursor = 'col-resize';
@@ -268,8 +237,7 @@
                 ondblclick={(e) => {
                     e.stopPropagation();
                     columnManager.resetWidth(key);
-                    // [FIX] Update selection overlay after reset
-                    // We use setTimeout to allow one render cycle for the DOM to update widths
+                    // Update selection overlay after reset
                     setTimeout(() => {
                       if (selection.hasSelection()) {
                         selection.updateOverlay();

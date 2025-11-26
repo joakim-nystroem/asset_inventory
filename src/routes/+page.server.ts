@@ -1,32 +1,36 @@
 import type { PageServerLoad } from './$types';
+import { db } from '$lib/server/db/db';
 
-export const load: PageServerLoad = async ({ fetch }) => {
+export const load: PageServerLoad = async () => {
   let assets: Record<string, any>[] = [];
+  let locations: Record<string, any>[] = [];
   let dbError: string | null = null;
   
   try {
-    const response = await fetch(`./api/init`);
+    // Run queries in parallel for performance
+    const [assetsResult, locationsResult] = await Promise.all([
+      db.selectFrom('asset_inventory').selectAll().orderBy('id').execute(),
+      db.selectFrom('locations').selectAll().orderBy('name').execute()
+    ]);
 
-    if (!response.ok) {
-      const err = await response.json();
-      throw new Error(err.message || 'Failed to fetch initial assets');
-    }
-
-    const result = await response.json();
-    assets = result.assets;
+    assets = assetsResult;
+    locations = locationsResult;
 
   } catch (err: unknown) {
     if (err instanceof Error) {
       dbError = err.message;
     } else {
-      dbError = 'An unknown database error occurred while fetching initial assets.';
+      dbError = 'An unknown database error occurred while fetching initial data.';
     }
     console.error('Database query failed:', dbError);
-    assets = []
-    
+    // Return empty arrays on error so the UI doesn't crash completely
+    assets = [];
+    locations = [];
   }
+
   return {
-      assets,
-      dbError
-    };
+    assets,
+    locations, // Pass the new data to the frontend
+    dbError
+  };
 };

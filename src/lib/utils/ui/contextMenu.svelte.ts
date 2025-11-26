@@ -10,7 +10,18 @@ export class ContextMenuState {
   open(e: MouseEvent, row: number, col: number) {
     e.preventDefault(); // Stop browser menu
     this.visible = true;
-    this.x = e.clientX;
+    
+    // Estimate menu width (min-w-32 is 128px, usually ~150px with content)
+    const estimatedWidth = 130; 
+    const windowWidth = window.innerWidth;
+
+    // If opening to the right goes off-screen, open to the left
+    if (e.clientX + estimatedWidth > windowWidth) {
+      this.x = e.clientX - estimatedWidth;
+    } else {
+      this.x = e.clientX;
+    }
+
     this.y = e.clientY;
     this.row = row;
     this.col = col;
@@ -20,4 +31,3 @@ export class ContextMenuState {
     this.visible = false;
   }
 }
-

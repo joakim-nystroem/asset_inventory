@@ -12,9 +12,14 @@ export interface AssetInventoryTable {
   model: string;
   wbd_tag: string | null;
   serial_license: string;
-  // ... add other columns
+}
+
+export interface LocationsTable {
+  id: Generated<number>;
+  name: string;
 }
 
 export interface Database {
   asset_inventory: AssetInventoryTable;
+  locations: LocationsTable;
 }
