@@ -61,6 +61,7 @@
 
   // --- Sorting Logic ---
   async function applySort(key: string, dir: 'asc' | 'desc') {
+    selection.reset();
     sort.update(key, dir);
     assets = await sort.applyAsync(assets);
     headerMenu.close();
