@@ -6,7 +6,7 @@
   import { ContextMenuState } from '$lib/utils/ui/contextMenu.svelte';
   import { HistoryManager } from '$lib/utils/interaction/historyManager.svelte';
   import { HeaderMenuState } from '$lib/utils/ui/headerMenu.svelte'
-  import { SelectionManager } from '$lib/utils/interaction/selectionManager.svelte';
+  import { SelectionManager, type VisualSelection } from '$lib/utils/interaction/selectionManager.svelte';
   import { ClipboardManager } from '$lib/utils/interaction/clipboardManager.svelte';
   import { SearchManager } from '$lib/utils/data/searchManager.svelte';
   import { SortManager } from '$lib/utils/data/sortManager.svelte';
@@ -27,7 +27,6 @@
   let { data } = $props();
 
   // --- Data State ---
-  // CHANGED: Using $state instead of $state.raw to ensure mutations (paste/undo) update the UI
   let assets: Record<string, any>[] = $state(data.assets);
   let locations: Record<string, any>[] = $state(data.locations || []);
   let keys: string[] = data.assets.length > 0 ? Object.keys(data.assets[0]) : [];
@@ -36,6 +35,28 @@
 
   // Get visible items for rendering
   const visibleData = $derived(virtualScroll.getVisibleItems(assets));
+
+  // --- Computed Overlays ---
+  // We compute the visuals reactively based on selection state, scroll position, and column widths
+  const selectionOverlay = $derived(
+    selection.computeVisualOverlay(
+      selection.start,
+      selection.end,
+      virtualScroll.visibleRange,
+      keys,
+      columnManager
+    )
+  );
+
+  const copyOverlay = $derived(
+    selection.isCopyVisible ? selection.computeVisualOverlay(
+      selection.copyStart,
+      selection.copyEnd,
+      virtualScroll.visibleRange,
+      keys,
+      columnManager
+    ) : null
+  );
 
   // --- Interaction Handler (Keyboard & Mouse) ---
   const mountInteraction = createInteractionHandler(
@@ -46,7 +67,10 @@
       headerMenu
     },
     {
-      onCopy: handleCopy,
+      onCopy: async () => {
+        await handleCopy();
+        selection.reset();
+      },
       onPaste: handlePaste,
       onUndo: () => history.undo(assets),
       onRedo: () => history.redo(assets),
@@ -56,7 +80,6 @@
         if (contextMenu.visible) contextMenu.close();
         headerMenu.close();
       },
-      // Wire up the scroll helper
       onScrollIntoView: (row, col) => {
         virtualScroll.ensureVisible(row, col, scrollContainer, keys, columnManager);
       },
@@ -118,7 +141,6 @@
       selection.reset();
       selection.start = { row: startRow, col: startCol };
       selection.end = { row: endRow, col: endCol };
-      selection.updateOverlay();
     }
   }
 
@@ -149,14 +171,6 @@
     };
   });
 
-  $effect(() => {
-    visibleData; 
-    
-    if (selection.hasSelection()) {
-      selection.updateOverlay();
-    }
-  });
-
   $effect(() => { 
     search.term;
     search.selectedFilters;
@@ -178,7 +192,7 @@
     <input
       bind:value={search.inputValue}
       class="bg-white dark:bg-neutral-100 dark:text-neutral-700 placeholder-neutral-500! p-1 border border-neutral-300 dark:border-none focus:outline-none"
-      placeholder="Search this list..."
+      placeholder="Search..."
       onkeydown={(e) => { if (e.key === 'Enter') search.executeSearch() }}
     />
     <button
@@ -213,7 +227,7 @@
     class="rounded-lg border border-neutral-200 dark:border-slate-700 bg-white dark:bg-slate-800 overflow-auto h-[calc(100dvh-8.8rem)] shadow-md relative select-none focus:outline-none"
     tabindex="-1"
   >
-    <div class="w-max min-w-full bg-white dark:bg-slate-800 text-left relative" style="height: {virtualScroll.getTotalHeight(assets.length) + 32}px;">
+    <div class="w-max min-w-full bg-white dark:bg-slate-800 text-leftkz relative" style="height: {virtualScroll.getTotalHeight(assets.length) + 32}px;">
       
       <!-- Header Row -->
       <div class="sticky top-0 z-20 flex border-b border-neutral-200 dark:border-slate-600 bg-neutral-50 dark:bg-slate-700">
@@ -237,6 +251,7 @@
               </span>
             </button>
 
+            <!-- Column Resizer -->
             <!-- svelte-ignore a11y_click_events_have_key_events -->
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div 
@@ -251,11 +266,6 @@
                 ondblclick={(e) => {
                     e.stopPropagation();
                     columnManager.resetWidth(key);
-                    setTimeout(() => {
-                      if (selection.hasSelection()) {
-                        selection.updateOverlay();
-                      }
-                  }, 0);
                 }}
             ></div>
           </div>
@@ -264,27 +274,39 @@
 
       <!-- Body Rows -->
       <div class="absolute top-8 w-full" style="transform: translateY({virtualScroll.getOffsetY()}px);">
-        <!-- Selection Overlays -->
-        {#if selection.copyOverlay.visible}
+        
+        <!-- Copy Overlay (Dashed) -->
+        {#if copyOverlay}
             <div
-             class="absolute pointer-events-none z-20 border-2 border-dotted border-blue-600 dark:border-blue-500"
-            style="
-                top: {selection.copyOverlay.top}px;
-                left: {selection.copyOverlay.left}px; 
-                width: {selection.copyOverlay.width}px; 
-                height: {selection.copyOverlay.height}px;
+             class="absolute pointer-events-none z-20 border-blue-600 dark:border-blue-500"
+             style="
+                top: {copyOverlay.top}px;
+                left: {copyOverlay.left}px; 
+                width: {copyOverlay.width}px; 
+                height: {copyOverlay.height}px;
+                border-top-style: {copyOverlay.showTopBorder ? 'dashed' : 'none'};
+                border-bottom-style: {copyOverlay.showBottomBorder ? 'dashed' : 'none'};
+                border-left-style: {copyOverlay.showLeftBorder ? 'dashed' : 'none'};
+                border-right-style: {copyOverlay.showRightBorder ? 'dashed' : 'none'};
+                border-width: 2px;
             "
             ></div>
         {/if}
 
-        {#if selection.selectionOverlay.visible && !selection.selectionMatchesCopy()}
+        <!-- Selection Overlay (Solid) -->
+        {#if selectionOverlay}
             <div
-            class="absolute pointer-events-none z-10 border-2 border-blue-600 dark:border-blue-500 bg-blue-100/10 dark:bg-blue-500/10"
+            class="absolute pointer-events-none z-10 border-blue-600 dark:border-blue-500 bg-blue-900/10"
             style="
-                top: {selection.selectionOverlay.top}px;
-                left: {selection.selectionOverlay.left}px; 
-                width: {selection.selectionOverlay.width}px; 
-                height: {selection.selectionOverlay.height}px;
+                top: {selectionOverlay.top}px;
+                left: {selectionOverlay.left}px; 
+                width: {selectionOverlay.width}px; 
+                height: {selectionOverlay.height}px;
+                border-top-style: {selectionOverlay.showTopBorder ? 'solid' : 'none'};
+                border-bottom-style: {selectionOverlay.showBottomBorder ? 'solid' : 'none'};
+                border-left-style: {selectionOverlay.showLeftBorder ? 'solid' : 'none'};
+                border-right-style: {selectionOverlay.showRightBorder ? 'solid' : 'none'};
+                border-width: 2px;
             "
             ></div>
         {/if}
@@ -292,7 +314,7 @@
         <!-- Data Items -->
         {#each visibleData.items as asset, i (asset.id || (visibleData.startIndex + i))}
           {@const actualIndex = visibleData.startIndex + i}
-          <div class="flex h-8 border-b border-neutral-200 dark:border-slate-700 hover:bg-blue-50 dark:hover:bg-slate-700 transition-colors">
+          <div class="flex h-8 border-b border-neutral-200 dark:border-slate-700 hover:bg-blue-50 dark:hover:bg-slate-700">
             {#each keys as key, j} 
               <!-- svelte-ignore a11y_no_static_element_interactions -->
               <div
@@ -375,7 +397,7 @@
           <div class="px-2 py-1 border-b border-neutral-200 dark:border-slate-700 mb-1">
             <input 
               bind:value={headerMenu.filterSearchTerm}
-              class="w-full text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400! dark:placeholder:text-neutral-400! focus:outline-none text-xs"
+              class="w-full pl-2 text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400! dark:placeholder:text-neutral-300! focus:outline-none text-xs"
               placeholder="Search values..."
               onclick={(e) => e.stopPropagation()}
               onkeydown={(e) => {

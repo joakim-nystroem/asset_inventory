@@ -103,7 +103,6 @@ export function createInteractionHandler(
         if (e.shiftKey) {
             // Update the end of the last range directly (Extend to Edge)
             selection.end = { row: targetRow, col: targetCol };
-            selection.updateOverlay();
         } else {
             // Move entire selection (Jump to Edge)
             selection.moveTo(targetRow, targetCol);
@@ -120,7 +119,6 @@ export function createInteractionHandler(
 
         if (next) {
           selection.end = next;
-          selection.updateOverlay();
           callbacks.onScrollIntoView(next.row, next.col);
         }
       } else {
@@ -149,9 +147,6 @@ export function createInteractionHandler(
     if (state.columnManager.resizingColumn) {
       e.preventDefault();
       state.columnManager.updateResize(e.clientX);
-      if (state.selection.hasSelection()) {
-        state.selection.updateOverlay();
-      }
     }
   }
 
@@ -159,9 +154,6 @@ export function createInteractionHandler(
     if (state.columnManager.resizingColumn) {
       state.columnManager.endResize();
       document.body.style.cursor = ''; 
-      if (state.selection.hasSelection()) {
-        state.selection.updateOverlay();
-      }
     }
     state.selection.endSelection();
   }

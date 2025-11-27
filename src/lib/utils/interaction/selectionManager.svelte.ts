@@ -1,100 +1,54 @@
 // src/lib/utils/interaction/selectionManager.svelte.ts
+import type { ColumnWidthManager } from '../core/columnManager.svelte';
 
 export type GridCell = {
   row: number;
   col: number;
 };
 
-export type SelectionRange = {
-  start: GridCell;
-  end: GridCell;
-};
-
-export type OverlayRect = {
+export type VisualSelection = {
   top: number;
   left: number;
   width: number;
   height: number;
-  visible: boolean;
+  isVisible: boolean;
+  showTopBorder: boolean;
+  showBottomBorder: boolean;
+  showLeftBorder: boolean;
+  showRightBorder: boolean;
 };
 
 export class SelectionManager {
-  // State: Single Range Selection
+  // State: Logical Selection
+  // 'start' is the anchor (where you clicked down)
+  // 'end' is the focus (where you dragged to)
   start = $state<GridCell>({ row: -1, col: -1 });
   end = $state<GridCell>({ row: -1, col: -1 });
   
   isSelecting = $state(false);
 
-  // Visual overlay for the single selection
-  selectionOverlay = $state<OverlayRect>({ 
-    top: 0, left: 0, width: 0, height: 0, visible: false 
-  });
-  
-  // Visual overlay for the copied area
-  copyOverlay = $state<OverlayRect>({ 
-    top: 0, left: 0, width: 0, height: 0, visible: false 
-  });
-
-  /**
-   * Helper: Calculate overlay rectangle geometry
-   */
-  private calculateRect(start: GridCell, end: GridCell): OverlayRect {
-    if (start.row === -1 || end.row === -1) {
-      return { top: 0, left: 0, width: 0, height: 0, visible: false };
-    }
-
-    const minRow = Math.min(start.row, end.row);
-    const maxRow = Math.max(start.row, end.row);
-    const minCol = Math.min(start.col, end.col);
-    const maxCol = Math.max(start.col, end.col);
-
-    // DOM Query to find positions
-    const startEl = document.querySelector(
-      `div[data-row="${minRow}"][data-col="${minCol}"]`
-    ) as HTMLElement;
-    
-    const endEl = document.querySelector(
-      `div[data-row="${maxRow}"][data-col="${maxCol}"]`
-    ) as HTMLElement;
-
-    if (!startEl || !endEl) {
-      return { top: 0, left: 0, width: 0, height: 0, visible: false };
-    }
-
-    return {
-      top: startEl.offsetTop,
-      left: startEl.offsetLeft,
-      width: (endEl.offsetLeft + endEl.offsetWidth) - startEl.offsetLeft,
-      height: (endEl.offsetTop + endEl.offsetHeight) - startEl.offsetTop,
-      visible: true
-    };
-  }
-
-  updateOverlay() {
-    this.selectionOverlay = this.calculateRect(this.start, this.end);
-  }
+  // Copied State (for the dashed box)
+  copyStart = $state<GridCell>({ row: -1, col: -1 });
+  copyEnd = $state<GridCell>({ row: -1, col: -1 });
+  isCopyVisible = $state(false);
 
   /**
    * Handle Mouse Down on a cell
    */
   handleMouseDown(row: number, col: number, e: MouseEvent) {
-    // Left click only
     if (e.button !== 0) return;
 
     this.isSelecting = true;
 
-    // Shift Key: Extend Selection
-    // Check if we have a valid start anchor before extending
+    // Shift Key: Extend Selection from existing Anchor
     if (e.shiftKey && this.start.row !== -1) {
       this.end = { row, col };
     } 
-    // Normal Click (or Ctrl Click, since disjoint ranges are out of scope)
+    // Normal Click: Reset Anchor
     else {
       this.start = { row, col };
       this.end = { row, col };
     }
-
-    this.updateOverlay();
   }
 
   /**
@@ -103,7 +57,6 @@ export class SelectionManager {
   extendSelection(row: number, col: number) {
     if (this.isSelecting) {
       this.end = { row, col };
-      this.updateOverlay();
     }
   }
 
@@ -117,7 +70,6 @@ export class SelectionManager {
   moveTo(row: number, col: number) {
     this.start = { row, col };
     this.end = { row, col };
-    this.updateOverlay();
   }
 
   /**
@@ -129,36 +81,35 @@ export class SelectionManager {
 
     this.start = { row, col };
     this.end = { row, col };
-    this.updateOverlay();
   }
 
   /**
    * Snapshot current selection for the dashed "Copy" border
    */
   snapshotAsCopied() {
-    const rect = this.calculateRect(this.start, this.end);
-    if (rect.visible) {
-      this.copyOverlay = rect;
+    if (this.start.row !== -1) {
+      this.copyStart = { ...this.start };
+      this.copyEnd = { ...this.end };
+      this.isCopyVisible = true;
     }
   }
 
   clearCopyOverlay() {
-    this.copyOverlay = { top: 0, left: 0, width: 0, height: 0, visible: false };
+    this.isCopyVisible = false;
   }
 
   reset() {
     this.start = { row: -1, col: -1 };
     this.end = { row: -1, col: -1 };
-    this.selectionOverlay.visible = false;
   }
 
   resetAll() {
     this.reset();
-    this.copyOverlay.visible = false;
+    this.isCopyVisible = false;
   }
 
   /**
-   * Get the bounding box of the selection
+   * Get the bounding box of the selection (Logical)
    */
   getBounds() {
     if (this.start.row === -1 || this.end.row === -1) return null;
@@ -171,11 +122,7 @@ export class SelectionManager {
     };
   }
 
-  /**
-   * API Compatibility for InteractionHandler
-   * Returns the current single selection as a range object
-   */
-  getPrimaryRange(): SelectionRange | null {
+  getPrimaryRange() {
     if (this.start.row === -1) return null;
     return { start: this.start, end: this.end };
   }
@@ -188,9 +135,6 @@ export class SelectionManager {
     return this.start.row !== -1 ? this.start : null;
   }
 
-  /**
-   * Check if a cell is within the rectangular bounds
-   */
   isCellSelected(row: number, col: number): boolean {
     if (this.start.row === -1) return false;
 
@@ -202,12 +146,80 @@ export class SelectionManager {
     return row >= minR && row <= maxR && col >= minC && col <= maxC;
   }
 
-  selectionMatchesCopy(): boolean {
-    if (!this.selectionOverlay.visible || !this.copyOverlay.visible) return false;
+  /**
+   * PURE MATH: Calculate the style/position of an overlay based on state
+   * strictly using data indices and column widths, no DOM querying.
+   */
+  computeVisualOverlay(
+    targetStart: GridCell,
+    targetEnd: GridCell,
+    visibleRange: { startIndex: number; endIndex: number },
+    keys: string[],
+    columnManager: ColumnWidthManager,
+    rowHeight: number = 32
+  ): VisualSelection | null {
+    if (targetStart.row === -1 || targetEnd.row === -1) return null;
 
-    return this.selectionOverlay.top === this.copyOverlay.top &&
-           this.selectionOverlay.left === this.copyOverlay.left &&
-           this.selectionOverlay.width === this.copyOverlay.width &&
-           this.selectionOverlay.height === this.copyOverlay.height;
+    // 1. Determine Logical Bounds
+    const logicalMinRow = Math.min(targetStart.row, targetEnd.row);
+    const logicalMaxRow = Math.max(targetStart.row, targetEnd.row);
+    const logicalMinCol = Math.min(targetStart.col, targetEnd.col);
+    const logicalMaxCol = Math.max(targetStart.col, targetEnd.col);
+
+    // 2. Determine Intersection with Visible Viewport
+    // The rendered container starts at visibleRange.startIndex.
+    // The indices inside the container are relative to that start.
+    
+    // Rows
+    const renderStartRow = Math.max(logicalMinRow, visibleRange.startIndex);
+    const renderEndRow = Math.min(logicalMaxRow, visibleRange.endIndex - 1);
+
+    // If completely out of view
+    if (renderStartRow > renderEndRow) {
+      return null;
+    }
+
+    // 3. Calculate Vertical Geometry (Relative to the transformed container)
+    // The container is transformed translateY(visibleRange.startIndex * rowHeight)
+    // So row `visibleRange.startIndex` is at 0px inside the container.
+    const relativeStartRow = renderStartRow - visibleRange.startIndex;
+    const rowCount = renderEndRow - renderStartRow + 1;
+
+    const top = relativeStartRow * rowHeight;
+    const height = rowCount * rowHeight;
+
+    // 4. Calculate Horizontal Geometry
+    let left = 0;
+    let width = 0;
+
+    // We assume columns are not virtualized for x-axis summation (or are cheap enough loop)
+    for (let c = 0; c < keys.length; c++) {
+      const colWidth = columnManager.getWidth(keys[c]);
+      
+      if (c < logicalMinCol) {
+        left += colWidth;
+      } else if (c >= logicalMinCol && c <= logicalMaxCol) {
+        width += colWidth;
+      } else if (c > logicalMaxCol) {
+        break; 
+      }
+    }
+
+    // 5. Border Logic (Clipping)
+    // If the logical start is visible, show top border. Otherwise hidden.
+    const showTopBorder = logicalMinRow >= visibleRange.startIndex;
+    const showBottomBorder = logicalMaxRow < visibleRange.endIndex;
+
+    return {
+      top,
+      left,
+      width,
+      height,
+      isVisible: true,
+      showTopBorder,
+      showBottomBorder,
+      showLeftBorder: true,  // Always true unless implementing column virtualization
+      showRightBorder: true
+    };
   }
 }
