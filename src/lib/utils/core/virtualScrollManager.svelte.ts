@@ -1,5 +1,7 @@
 // $lib/utils/virtualScrollManager.svelte.ts
 
+import type { ColumnWidthManager } from './columnManager.svelte';
+
 export class VirtualScrollManager {
   // Configuration
   rowHeight = 32; // Height of each row in pixels (h-8 = 2rem = 32px)
@@ -88,12 +90,18 @@ export class VirtualScrollManager {
   }
 
   /**
-   * Smartly scroll container so the target row is visible.
-   * Accounts for the sticky header offset and adds a buffer for the bottom.
+   * Smartly scroll container so the target cell (row + col) is visible.
    */
-  ensureVisible(rowIndex: number, container: HTMLElement | null) {
+  ensureVisible(
+    rowIndex: number, 
+    colIndex: number,
+    container: HTMLElement | null,
+    keys: string[],
+    columnManager: ColumnWidthManager
+  ) {
     if (!container) return;
 
+    // --- Vertical Scrolling ---
     const headerHeight = 32; // Matches h-8 header
 
     // 1. Calculate the Visual Position of the row (accounting for top-8 offset)
@@ -101,21 +109,43 @@ export class VirtualScrollManager {
     const rowVisualBottom = rowVisualTop + this.rowHeight;
 
     // 2. Calculate the Viewport boundaries
-    // The "Effective" Top is below the sticky header
     const viewTop = container.scrollTop + headerHeight;
     const viewBottom = container.scrollTop + container.clientHeight;
 
-    // 3. Scroll Logic
+    // 3. Scroll Logic (Vertical)
     if (rowVisualTop < viewTop) {
-      // Target is hidden ABOVE (behind header) -> Scroll Up
       container.scrollTop = rowVisualTop - headerHeight;
       this.scrollTop = container.scrollTop;
     } 
     else if (rowVisualBottom > viewBottom) {
       const scrollBuffer = 40; 
-      
       container.scrollTop = rowVisualBottom - container.clientHeight + scrollBuffer;
       this.scrollTop = container.scrollTop;
+    }
+
+    // --- Horizontal Scrolling ---
+    if (colIndex < 0 || colIndex >= keys.length) return;
+
+    // 1. Calculate Horizontal Position
+    let cellLeft = 0;
+    for (let i = 0; i < colIndex; i++) {
+        cellLeft += columnManager.getWidth(keys[i]);
+    }
+    const cellWidth = columnManager.getWidth(keys[colIndex]);
+    const cellRight = cellLeft + cellWidth;
+
+    // 2. Viewport Boundaries (Horizontal)
+    const viewLeft = container.scrollLeft;
+    const viewRight = container.scrollLeft + container.clientWidth;
+
+    // 3. Scroll Logic (Horizontal)
+    if (cellLeft < viewLeft) {
+        // Target is hidden to the LEFT -> Scroll Left
+        container.scrollLeft = cellLeft;
+    } else if (cellRight > viewRight) {
+        // Target is hidden to the RIGHT -> Scroll Right
+        // We subtract clientWidth to align the right edge, optionally adding a small buffer
+        container.scrollLeft = cellRight - container.clientWidth; 
     }
   }
 }

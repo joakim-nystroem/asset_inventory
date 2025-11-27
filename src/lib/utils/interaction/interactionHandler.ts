@@ -75,62 +75,57 @@ export function createInteractionHandler(
 
       const { rows, cols } = callbacks.getGridSize();
       const { selection } = state;
+      
+      // Get current anchor (last active range start/end)
+      const primary = selection.getPrimaryRange();
+      if (!primary) return;
 
-      // Handle Ctrl + Arrow (Jump/Extend to Edge or Collapse to Root)
+      // Handle Ctrl + Arrow (Jump/Extend to Edge)
       if (e.metaKey || e.ctrlKey) {
-        if (selection.start.row === -1) return;
-
-        let targetRow = selection.end.row;
-        let targetCol = selection.end.col;
+        let targetRow = primary.end.row;
+        let targetCol = primary.end.col;
 
         switch (e.key) {
           case 'ArrowUp': 
             targetRow = 0;
             break;
-
           case 'ArrowDown': 
             targetRow = rows - 1;
             break;
-
           case 'ArrowLeft': 
             targetCol = 0; 
             break;
-
           case 'ArrowRight': 
             targetCol = cols - 1;
             break;
         }
 
         if (e.shiftKey) {
+            // Update the end of the last range directly (Extend to Edge)
             selection.end = { row: targetRow, col: targetCol };
             selection.updateOverlay();
         } else {
+            // Move entire selection (Jump to Edge)
             selection.moveTo(targetRow, targetCol);
         }
         
-        // Trigger scroll to the new target row
         callbacks.onScrollIntoView(targetRow, targetCol);
         return;
       }
 
       // Standard Arrow Navigation
       if (e.shiftKey) {
-        // Shift + Arrow: Extend selection
-        const current = selection.end.row !== -1 ? selection.end : selection.start;
-        const next = getKeyboardNavigation(e, current, rows, cols);
+        // Shift + Arrow: Extend active selection range
+        const next = getKeyboardNavigation(e, primary.end, rows, cols);
 
         if (next) {
-          if (selection.start.row === -1) {
-            selection.startSelection(next.row, next.col);
-          } else {
-            selection.end = next;
-            selection.updateOverlay();
-          }
+          selection.end = next;
+          selection.updateOverlay();
           callbacks.onScrollIntoView(next.row, next.col);
         }
       } else {
-        // Arrow only: Move selection
-        const current = selection.getAnchor();
+        // Arrow only: Move selection (reset to single cell)
+        const current = primary.start; 
         const next = getKeyboardNavigation(e, current, rows, cols);
 
         if (next) {
@@ -190,12 +185,10 @@ export function createInteractionHandler(
 // Helper: Arrow Navigation Calculation
 function getKeyboardNavigation(
   e: KeyboardEvent,
-  current: GridCell | null,
+  current: GridCell,
   rowCount: number,
   colCount: number
 ): GridCell | null {
-  if (!current) return { row: 0, col: 0 };
-
   const { row, col } = current;
 
   switch (e.key) {

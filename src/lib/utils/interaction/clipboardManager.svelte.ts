@@ -28,7 +28,6 @@ export class ClipboardManager {
   internal = $state<CopiedItem[]>([]);
   private lastCopiedText = '';
 
-  // ... (copy method remains the same) ...
   async copy(
     selectionManager: SelectionManager,
     assets: any[],
@@ -41,7 +40,7 @@ export class ClipboardManager {
     const bounds = selectionManager.getBounds();
     if (!bounds) return;
 
-    // 3. Capture data for internal clipboard and external clipboard
+    // 3. Capture data
     const newClipboard: CopiedItem[] = [];
     const externalRows: string[] = [];
 
@@ -80,7 +79,6 @@ export class ClipboardManager {
 
   /**
    * Paste from clipboard using Batch Recording
-   * Returns the dimensions of the pasted area { rows, cols } or null
    */
   async paste(
     target: { row: number; col: number } | null,
@@ -93,6 +91,7 @@ export class ClipboardManager {
     const systemText = await readFromClipboard();
     if (systemText === null) return null;
 
+    // Determine if we can use internal high-fidelity clipboard or must parse text
     const useInternal = this.internal.length > 0 && systemText === this.lastCopiedText;
     
     // Collection for batch history
@@ -147,9 +146,6 @@ export class ClipboardManager {
     return { rows: maxRelRow + 1, cols: maxRelCol + 1 };
   }
 
-  /**
-   * Mutates the asset and returns the history action (or null if no change)
-   */
   private applyValue(
     row: number, 
     col: number, 
@@ -157,16 +153,13 @@ export class ClipboardManager {
     assets: any[], 
     keys: string[]
   ): HistoryAction | null {
-    // Bounds Check
     if (row >= 0 && row < assets.length && col >= 0 && col < keys.length) {
       const asset = assets[row];
       const key = keys[col];
       const oldValue = String(asset[key] ?? '');
       
       if (oldValue !== value) {
-        // Perform Mutation
         asset[key] = value;
-        // Return Record
         return { id: asset.id, key, oldValue, newValue: value };
       }
     }

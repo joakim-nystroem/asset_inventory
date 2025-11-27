@@ -27,7 +27,8 @@
   let { data } = $props();
 
   // --- Data State ---
-  let assets: Record<string, any>[] = $state.raw(data.assets);
+  // CHANGED: Using $state instead of $state.raw to ensure mutations (paste/undo) update the UI
+  let assets: Record<string, any>[] = $state(data.assets);
   let locations: Record<string, any>[] = $state(data.locations || []);
   let keys: string[] = data.assets.length > 0 ? Object.keys(data.assets[0]) : [];
   
@@ -55,9 +56,9 @@
         if (contextMenu.visible) contextMenu.close();
         headerMenu.close();
       },
-      // [NEW] Wire up the scroll helper
+      // Wire up the scroll helper
       onScrollIntoView: (row, col) => {
-        virtualScroll.ensureVisible(row, scrollContainer);
+        virtualScroll.ensureVisible(row, col, scrollContainer, keys, columnManager);
       },
       getGridSize: () => ({ rows: assets.length, cols: keys.length })
     }
@@ -115,9 +116,9 @@
       const endCol = Math.min(startCol + pasteSize.cols - 1, keys.length - 1);
 
       selection.reset();
-      selection.startSelection(startRow, startCol);
-      selection.extendSelection(endRow, endCol);
-      selection.endSelection();
+      selection.start = { row: startRow, col: startCol };
+      selection.end = { row: endRow, col: endCol };
+      selection.updateOverlay();
     }
   }
 
@@ -297,7 +298,7 @@
               <div
                 data-row={actualIndex}
                 data-col={j} 
-                onmousedown={(e) => selection.startSelection(actualIndex, j, e.shiftKey)}
+                onmousedown={(e) => selection.handleMouseDown(actualIndex, j, e)}
                 onmouseenter={() => selection.extendSelection(actualIndex, j)}
                 oncontextmenu={(e) => handleContextMenu(e, i, j)}
                 class="

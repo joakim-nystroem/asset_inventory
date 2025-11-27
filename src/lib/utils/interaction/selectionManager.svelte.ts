@@ -5,6 +5,11 @@ export type GridCell = {
   col: number;
 };
 
+export type SelectionRange = {
+  start: GridCell;
+  end: GridCell;
+};
+
 export type OverlayRect = {
   top: number;
   left: number;
@@ -14,24 +19,26 @@ export type OverlayRect = {
 };
 
 export class SelectionManager {
-  // Selection state
+  // State: Single Range Selection
   start = $state<GridCell>({ row: -1, col: -1 });
   end = $state<GridCell>({ row: -1, col: -1 });
+  
   isSelecting = $state(false);
 
-  // Visual overlays
+  // Visual overlay for the single selection
   selectionOverlay = $state<OverlayRect>({ 
     top: 0, left: 0, width: 0, height: 0, visible: false 
   });
   
+  // Visual overlay for the copied area
   copyOverlay = $state<OverlayRect>({ 
     top: 0, left: 0, width: 0, height: 0, visible: false 
   });
 
   /**
-   * Calculate overlay rectangle geometry from start/end cells
+   * Helper: Calculate overlay rectangle geometry
    */
-  private calculateOverlayRect(start: GridCell, end: GridCell): OverlayRect {
+  private calculateRect(start: GridCell, end: GridCell): OverlayRect {
     if (start.row === -1 || end.row === -1) {
       return { top: 0, left: 0, width: 0, height: 0, visible: false };
     }
@@ -41,9 +48,7 @@ export class SelectionManager {
     const minCol = Math.min(start.col, end.col);
     const maxCol = Math.max(start.col, end.col);
 
-    // We query the DOM elements. 
-    // In virtual scroll, if the row is not rendered, this returns null.
-    // The overlay will simply be hidden or clipped for off-screen items.
+    // DOM Query to find positions
     const startEl = document.querySelector(
       `div[data-row="${minRow}"][data-col="${minCol}"]`
     ) as HTMLElement;
@@ -66,30 +71,35 @@ export class SelectionManager {
   }
 
   updateOverlay() {
-    this.selectionOverlay = this.calculateOverlayRect(this.start, this.end);
+    this.selectionOverlay = this.calculateRect(this.start, this.end);
   }
 
-  startSelection(row: number, col: number, expand: boolean = false) {
+  /**
+   * Handle Mouse Down on a cell
+   */
+  handleMouseDown(row: number, col: number, e: MouseEvent) {
+    // Left click only
+    if (e.button !== 0) return;
+
     this.isSelecting = true;
 
-    if (expand && this.start.row !== -1) {
+    // Shift Key: Extend Selection
+    // Check if we have a valid start anchor before extending
+    if (e.shiftKey && this.start.row !== -1) {
       this.end = { row, col };
-      this.updateOverlay();
-      return; 
+    } 
+    // Normal Click (or Ctrl Click, since disjoint ranges are out of scope)
+    else {
+      this.start = { row, col };
+      this.end = { row, col };
     }
 
-    if (this.start.row === row && this.start.col === col && 
-        this.end.row === row && this.end.col === col) {
-      this.reset();
-      this.isSelecting = false; 
-      return;
-    }
-
-    this.start = { row, col };
-    this.end = { row, col };
     this.updateOverlay();
   }
 
+  /**
+   * Handle Mouse Enter (Drag)
+   */
   extendSelection(row: number, col: number) {
     if (this.isSelecting) {
       this.end = { row, col };
@@ -101,20 +111,32 @@ export class SelectionManager {
     this.isSelecting = false;
   }
 
+  /**
+   * Programmatic Move / Keyboard Navigation
+   */
   moveTo(row: number, col: number) {
     this.start = { row, col };
     this.end = { row, col };
     this.updateOverlay();
   }
 
+  /**
+   * Select specific cell (Context menu or programmatic)
+   */
   selectCell(row: number, col: number) {
+    // If cell is already inside the current rectangular selection, don't reset
+    if (this.isCellSelected(row, col)) return;
+
     this.start = { row, col };
     this.end = { row, col };
     this.updateOverlay();
   }
 
+  /**
+   * Snapshot current selection for the dashed "Copy" border
+   */
   snapshotAsCopied() {
-    const rect = this.calculateOverlayRect(this.start, this.end);
+    const rect = this.calculateRect(this.start, this.end);
     if (rect.visible) {
       this.copyOverlay = rect;
     }
@@ -135,10 +157,11 @@ export class SelectionManager {
     this.copyOverlay.visible = false;
   }
 
+  /**
+   * Get the bounding box of the selection
+   */
   getBounds() {
-    if (this.start.row === -1 || this.end.row === -1) {
-      return null;
-    }
+    if (this.start.row === -1 || this.end.row === -1) return null;
 
     return {
       minRow: Math.min(this.start.row, this.end.row),
@@ -148,43 +171,43 @@ export class SelectionManager {
     };
   }
 
-  isCellInCopyOverlay(row: number, col: number): boolean {
-    if (!this.copyOverlay.visible) return false;
-    
-    // Simple visual check logic remains the same
-    const el = document.querySelector(`div[data-row="${row}"][data-col="${col}"]`) as HTMLElement;
-    if (!el) return false;
-    
-    const cellTop = el.offsetTop;
-    const cellLeft = el.offsetLeft;
-    const cellRight = cellLeft + el.offsetWidth;
-    const cellBottom = cellTop + el.offsetHeight;
-    
-    const copyTop = this.copyOverlay.top;
-    const copyLeft = this.copyOverlay.left;
-    const copyRight = copyLeft + this.copyOverlay.width;
-    const copyBottom = copyTop + this.copyOverlay.height;
-    
-    return cellLeft >= copyLeft && 
-           cellRight <= copyRight && 
-           cellTop >= copyTop && 
-           cellBottom <= copyBottom;
-  }
-
-  selectionMatchesCopy(): boolean {
-    if (!this.selectionOverlay.visible || !this.copyOverlay.visible) return false;
-    
-    return this.selectionOverlay.top === this.copyOverlay.top &&
-           this.selectionOverlay.left === this.copyOverlay.left &&
-           this.selectionOverlay.width === this.copyOverlay.width &&
-           this.selectionOverlay.height === this.copyOverlay.height;
+  /**
+   * API Compatibility for InteractionHandler
+   * Returns the current single selection as a range object
+   */
+  getPrimaryRange(): SelectionRange | null {
+    if (this.start.row === -1) return null;
+    return { start: this.start, end: this.end };
   }
 
   hasSelection() {
-    return this.start.row !== -1 && this.end.row !== -1;
+    return this.start.row !== -1;
   }
 
   getAnchor(): GridCell | null {
     return this.start.row !== -1 ? this.start : null;
+  }
+
+  /**
+   * Check if a cell is within the rectangular bounds
+   */
+  isCellSelected(row: number, col: number): boolean {
+    if (this.start.row === -1) return false;
+
+    const minR = Math.min(this.start.row, this.end.row);
+    const maxR = Math.max(this.start.row, this.end.row);
+    const minC = Math.min(this.start.col, this.end.col);
+    const maxC = Math.max(this.start.col, this.end.col);
+    
+    return row >= minR && row <= maxR && col >= minC && col <= maxC;
+  }
+
+  selectionMatchesCopy(): boolean {
+    if (!this.selectionOverlay.visible || !this.copyOverlay.visible) return false;
+
+    return this.selectionOverlay.top === this.copyOverlay.top &&
+           this.selectionOverlay.left === this.copyOverlay.left &&
+           this.selectionOverlay.width === this.copyOverlay.width &&
+           this.selectionOverlay.height === this.copyOverlay.height;
   }
 }
