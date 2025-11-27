@@ -7,7 +7,6 @@ export const load: PageServerLoad = async () => {
   let dbError: string | null = null;
   
   try {
-    // Run queries in parallel for performance
     const [assetsResult, locationsResult] = await Promise.all([
       db.selectFrom('asset_inventory').selectAll().orderBy('id').execute(),
       db.selectFrom('locations').selectAll().orderBy('name').execute()
@@ -30,7 +29,7 @@ export const load: PageServerLoad = async () => {
 
   return {
     assets,
-    locations, // Pass the new data to the frontend
+    locations, 
     dbError
   };
 };

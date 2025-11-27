@@ -7,7 +7,6 @@ export const GET: RequestHandler = async ({ url }) => {
   const searchTerm = url.searchParams.get('q') || '';
   const filters = url.searchParams.getAll('filter');
 
-  // Pass distinct arguments to the shared logic
   const assets = await searchAssets(searchTerm, filters);
   
   return json({ assets });

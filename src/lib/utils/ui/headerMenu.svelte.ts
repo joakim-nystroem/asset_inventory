@@ -3,9 +3,9 @@
 export class HeaderMenuState {
   // The column currently open (e.g. 'manufacturer')
   activeKey = $state(''); 
-  
-  // Is the filter sub-menu open?
   filterOpen = $state(false);
+
+  filterSearchTerm = $state('');
   
   // Position of the menu
   x = $state(0);
@@ -31,6 +31,9 @@ export class HeaderMenuState {
   }
 
   toggleFilter() {
+    if (!this.filterOpen) {
+      this.filterSearchTerm = '';
+    }
     this.filterOpen = !this.filterOpen;
   }
 

@@ -33,7 +33,6 @@ export function createInteractionHandler(
 
     if (isInput) return;
 
-    // Escape - Clear everything
     if (e.key === 'Escape') {
       callbacks.onEscape();
       return;

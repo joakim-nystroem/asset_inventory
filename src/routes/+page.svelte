@@ -4,7 +4,6 @@
   import { createInteractionHandler } from '$lib/utils/interaction/interactionHandler';
   
   // --- STATE CLASSES ---
-  // [UPDATED] Imports based on the new folder structure
   import { ContextMenuState } from '$lib/utils/ui/contextMenu.svelte';
   import { HistoryManager } from '$lib/utils/interaction/historyManager.svelte';
   import { HeaderMenuState } from '$lib/utils/ui/headerMenu.svelte'
@@ -29,7 +28,7 @@
   let { data } = $props();
   
   // --- Data State ---
-  let assets: Record<string, any>[] = $state(data.assets);
+  let assets: Record<string, any>[] = $state.raw(data.assets);
   let locations: Record<string, any>[] = $state(data.locations || []);
   
   let keys: string[] = data.assets.length > 0 ? Object.keys(data.assets[0]) : [];
@@ -54,6 +53,7 @@
       onEscape: () => {
         selection.resetAll();
         clipboard.clear();
+        headerMenu.close();
         if (contextMenu.visible) contextMenu.close();
       },
       getGridSize: () => ({ rows: assets.length, cols: keys.length })
@@ -124,7 +124,6 @@
   // --- Lifecycle & Window Events ---
   
   $effect(() => {
-    // [UPDATED] Mount the unified interaction handler
     const cleanupInteraction = mountInteraction(window);
     
     // Resize Observer for Virtual Scroll
@@ -175,7 +174,7 @@
   <div class="flex flex-row w-full justify-between items-center">
     <div class="flex flex-row text-xs gap-2">
       {#each search.selectedFilters as filter} 
-        <div class="p-1 border rounded-md border-neutral-700 dark:border-neutral-300 space-x-2 flex items-center">
+        <div class="p-1 outline-1 rounded-md outline-neutral-700 dark:outline-neutral-300 space-x-2 flex items-center">
           <span class="cursor-default">{((filter.key).charAt(0).toUpperCase() + (filter.key).slice(1)).replaceAll('_', ' ')}: {filter.value}</span>
           <button 
             class="text-neutral-500 dark:text-neutral-300 text-base hover:dark:text-red-400 hover:text-red-600 hover:cursor-pointer"
@@ -360,13 +359,34 @@
 
       {#if headerMenu.filterOpen}
         <div class="absolute z-50 top-0 left-full ml-1 bg-white dark:bg-slate-800 border border-neutral-300 dark:border-slate-700 rounded shadow-xl py-1 text-sm min-w-48">
+          
+          <div class="px-2 py-1 border-b border-neutral-200 dark:border-slate-700 mb-1">
+            <!-- svelte-ignore a11y_autofocus -->
+            <input 
+              bind:value={headerMenu.filterSearchTerm}
+              class="w-full text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 dark:placeholder:text-neutral-200 focus:outline-none text-xs"
+              placeholder="Search values..."
+              onclick={(e) => e.stopPropagation()}
+              onkeydown={(e) => {
+                if (e.key === 'Escape') {
+                  e.stopPropagation();
+                  headerMenu.close();
+                }
+              }}
+              autofocus 
+            />
+          </div>
+
           <div class="max-h-48 overflow-y-auto no-scrollbar">
-             {#each search.getFilterItems(headerMenu.activeKey, assets) as item}
+             {#each search.getFilterItems(headerMenu.activeKey, assets)
+                .filter(i => i.toLowerCase().includes(headerMenu.filterSearchTerm.toLowerCase())) 
+                as item
+             }
               <button 
                 class="px-3 py-1.5 hover:bg-blue-50 dark:hover:bg-slate-700 text-left flex items-center gap-2 group w-full" 
                 onclick={() => { 
                   search.selectFilterItem(item, headerMenu.activeKey, assets);
-                  headerMenu.close(); 
+                  // headerMenu.close(); 
                 }}
               >
                 <div class="w-4 flex justify-center text-blue-600 dark:text-blue-400 font-bold">
