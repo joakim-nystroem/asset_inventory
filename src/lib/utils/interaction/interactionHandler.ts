@@ -11,6 +11,7 @@ export type InteractionCallbacks = {
   onUndo: () => void;
   onRedo: () => void;
   onEscape: () => void;
+  onScrollIntoView: (row: number, col: number) => void;
   getGridSize: () => { rows: number; cols: number };
 };
 
@@ -33,6 +34,7 @@ export function createInteractionHandler(
 
     if (isInput) return;
 
+    // Escape - Clear everything
     if (e.key === 'Escape') {
       callbacks.onEscape();
       return;
@@ -74,6 +76,44 @@ export function createInteractionHandler(
       const { rows, cols } = callbacks.getGridSize();
       const { selection } = state;
 
+      // Handle Ctrl + Arrow (Jump/Extend to Edge or Collapse to Root)
+      if (e.metaKey || e.ctrlKey) {
+        if (selection.start.row === -1) return;
+
+        let targetRow = selection.end.row;
+        let targetCol = selection.end.col;
+
+        switch (e.key) {
+          case 'ArrowUp': 
+            targetRow = 0;
+            break;
+
+          case 'ArrowDown': 
+            targetRow = rows - 1;
+            break;
+
+          case 'ArrowLeft': 
+            targetCol = 0; 
+            break;
+
+          case 'ArrowRight': 
+            targetCol = cols - 1;
+            break;
+        }
+
+        if (e.shiftKey) {
+            selection.end = { row: targetRow, col: targetCol };
+            selection.updateOverlay();
+        } else {
+            selection.moveTo(targetRow, targetCol);
+        }
+        
+        // Trigger scroll to the new target row
+        callbacks.onScrollIntoView(targetRow, targetCol);
+        return;
+      }
+
+      // Standard Arrow Navigation
       if (e.shiftKey) {
         // Shift + Arrow: Extend selection
         const current = selection.end.row !== -1 ? selection.end : selection.start;
@@ -86,6 +126,7 @@ export function createInteractionHandler(
             selection.end = next;
             selection.updateOverlay();
           }
+          callbacks.onScrollIntoView(next.row, next.col);
         }
       } else {
         // Arrow only: Move selection
@@ -94,6 +135,7 @@ export function createInteractionHandler(
 
         if (next) {
           selection.moveTo(next.row, next.col);
+          callbacks.onScrollIntoView(next.row, next.col);
         }
       }
     }
@@ -102,7 +144,6 @@ export function createInteractionHandler(
   // --- Mouse Logic ---
 
   function handleWindowClick(e: MouseEvent) {
-    // Close menus on outside click
     if (state.contextMenu.visible) {
         state.contextMenu.close();
     }
@@ -110,12 +151,9 @@ export function createInteractionHandler(
   }
 
   function handleWindowMouseMove(e: MouseEvent) {
-    // Handle Column Resize Drag
     if (state.columnManager.resizingColumn) {
-      e.preventDefault(); // Prevent text selection while resizing
+      e.preventDefault();
       state.columnManager.updateResize(e.clientX);
-
-      // Keep selection overlay in sync with shifting columns
       if (state.selection.hasSelection()) {
         state.selection.updateOverlay();
       }
@@ -123,17 +161,13 @@ export function createInteractionHandler(
   }
 
   function handleWindowMouseUp() {
-    // End Column Resize
     if (state.columnManager.resizingColumn) {
-      console.log('[Interaction] Mouse Up - Ending Resize');
       state.columnManager.endResize();
-      document.body.style.cursor = ''; // Reset cursor
-
+      document.body.style.cursor = ''; 
       if (state.selection.hasSelection()) {
         state.selection.updateOverlay();
       }
     }
-    // End Selection Drag
     state.selection.endSelection();
   }
 

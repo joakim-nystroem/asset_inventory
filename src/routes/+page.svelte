@@ -1,6 +1,5 @@
 <script lang="ts">
   // --- UTILS IMPORTS ---
-  // [UPDATED] Import the new unified handler
   import { createInteractionHandler } from '$lib/utils/interaction/interactionHandler';
   
   // --- STATE CLASSES ---
@@ -26,12 +25,12 @@
   const columnManager = new ColumnWidthManager();
 
   let { data } = $props();
-  
+
   // --- Data State ---
   let assets: Record<string, any>[] = $state.raw(data.assets);
   let locations: Record<string, any>[] = $state(data.locations || []);
-  
   let keys: string[] = data.assets.length > 0 ? Object.keys(data.assets[0]) : [];
+  
   let scrollContainer: HTMLDivElement | null = $state(null);
 
   // Get visible items for rendering
@@ -53,8 +52,12 @@
       onEscape: () => {
         selection.resetAll();
         clipboard.clear();
-        headerMenu.close();
         if (contextMenu.visible) contextMenu.close();
+        headerMenu.close();
+      },
+      // [NEW] Wire up the scroll helper
+      onScrollIntoView: (row, col) => {
+        virtualScroll.ensureVisible(row, scrollContainer);
       },
       getGridSize: () => ({ rows: assets.length, cols: keys.length })
     }
@@ -104,6 +107,7 @@
     const pasteSize = await clipboard.paste(target, assets, keys, history);
     
     if (contextMenu.visible) contextMenu.close();
+
     if (pasteSize) {
       const startRow = target.row;
       const startCol = target.col;
@@ -124,6 +128,7 @@
   // --- Lifecycle & Window Events ---
   
   $effect(() => {
+    // Mount the unified interaction handler
     const cleanupInteraction = mountInteraction(window);
     
     // Resize Observer for Virtual Scroll
@@ -143,6 +148,14 @@
     };
   });
 
+  $effect(() => {
+    visibleData; 
+    
+    if (selection.hasSelection()) {
+      selection.updateOverlay();
+    }
+  });
+
   $effect(() => { 
     search.term;
     search.selectedFilters;
@@ -154,6 +167,7 @@
     search.cleanupFilterCache();
     sort.invalidateCache();
   });
+
 </script>
 
 <!-- Header / Filter UI -->
@@ -162,7 +176,7 @@
   <div class="flex gap-4 items-center">
     <input
       bind:value={search.inputValue}
-      class="bg-white dark:bg-neutral-100 dark:text-neutral-700 p-1 border border-neutral-300 dark:border-none focus:outline-none"
+      class="bg-white dark:bg-neutral-100 dark:text-neutral-700 placeholder-neutral-500! p-1 border border-neutral-300 dark:border-none focus:outline-none"
       placeholder="Search this list..."
       onkeydown={(e) => { if (e.key === 'Enter') search.executeSearch() }}
     />
@@ -195,15 +209,16 @@
   <div 
     bind:this={scrollContainer}
     onscroll={(e) => virtualScroll.handleScroll(e)}
-    class="rounded-lg border border-neutral-200 dark:border-slate-700 bg-white dark:bg-slate-800 overflow-auto h-[calc(100dvh-9.3rem)] shadow-md relative select-none focus:outline-none"
+    class="rounded-lg border border-neutral-200 dark:border-slate-700 bg-white dark:bg-slate-800 overflow-auto h-[calc(100dvh-8.8rem)] shadow-md relative select-none focus:outline-none"
     tabindex="-1"
   >
-    <div class="w-max min-w-full bg-white dark:bg-slate-800 text-left relative" style="height: {virtualScroll.getTotalHeight(assets.length)}px;">
+    <div class="w-max min-w-full bg-white dark:bg-slate-800 text-left relative" style="height: {virtualScroll.getTotalHeight(assets.length) + 32}px;">
       
       <!-- Header Row -->
       <div class="sticky top-0 z-20 flex border-b border-neutral-200 dark:border-slate-600 bg-neutral-50 dark:bg-slate-700">
-        {#each keys as key}
+        {#each keys as key, i}
           <div 
+            data-header-col={i}
             class="header-interactive relative group border-r border-neutral-200 dark:border-slate-600 last:border-r-0"
             style="width: {columnManager.getWidth(key)}px; min-width: {columnManager.getWidth(key)}px;"
           >
@@ -221,7 +236,6 @@
               </span>
             </button>
 
-            <!-- Resize Handle -->
             <!-- svelte-ignore a11y_click_events_have_key_events -->
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div 
@@ -236,12 +250,11 @@
                 ondblclick={(e) => {
                     e.stopPropagation();
                     columnManager.resetWidth(key);
-                    // Update selection overlay after reset
                     setTimeout(() => {
                       if (selection.hasSelection()) {
                         selection.updateOverlay();
                       }
-                    }, 0);
+                  }, 0);
                 }}
             ></div>
           </div>
@@ -249,7 +262,7 @@
       </div>
 
       <!-- Body Rows -->
-      <div class="absolute w-full" style="transform: translateY({virtualScroll.getOffsetY()}px);">
+      <div class="absolute top-8 w-full" style="transform: translateY({virtualScroll.getOffsetY()}px);">
         <!-- Selection Overlays -->
         {#if selection.copyOverlay.visible}
             <div
@@ -278,11 +291,9 @@
         <!-- Data Items -->
         {#each visibleData.items as asset, i (asset.id || (visibleData.startIndex + i))}
           {@const actualIndex = visibleData.startIndex + i}
-          <div class="flex border-b border-neutral-200 dark:border-slate-700 hover:bg-blue-50 dark:hover:bg-slate-700 transition-colors">
+          <div class="flex h-8 border-b border-neutral-200 dark:border-slate-700 hover:bg-blue-50 dark:hover:bg-slate-700 transition-colors">
             {#each keys as key, j} 
-              <!-- DISPLAY MODE -->
               <!-- svelte-ignore a11y_no_static_element_interactions -->
-              <!-- svelte-ignore a11y_click_events_have_key_events -->
               <div
                 data-row={actualIndex}
                 data-col={j} 
@@ -290,7 +301,7 @@
                 onmouseenter={() => selection.extendSelection(actualIndex, j)}
                 oncontextmenu={(e) => handleContextMenu(e, i, j)}
                 class="
-                  h-8 px-2 flex items-center text-xs cursor-cell
+                  h-full px-2 flex items-center text-xs cursor-cell
                   text-neutral-700 dark:text-neutral-200 
                   hover:bg-blue-100 dark:hover:bg-slate-600
                   border-r border-neutral-200 dark:border-slate-700 last:border-r-0
@@ -319,7 +330,7 @@
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div 
-    class="fixed z-50 bg-white dark:bg-slate-800 border border-neutral-300 dark:border-slate-700 rounded shadow-xl py-1 text-sm text-neutral-900 dark:text-neutral-100 min-w-48 font-normal normal-case cursor-default text-left flex flex-col" 
+    class="fixed z-50 bg-neutral-50 dark:bg-slate-900 border border-neutral-300 dark:border-slate-700 rounded shadow-xl py-1 text-sm text-neutral-900 dark:text-neutral-100 min-w-48 font-normal normal-case cursor-default text-left flex flex-col"
     style="top: {headerMenu.y}px; left: {headerMenu.x}px;" 
     onclick={(e) => e.stopPropagation()}
   >
@@ -358,13 +369,12 @@
       </button>
 
       {#if headerMenu.filterOpen}
-        <div class="absolute z-50 top-0 left-full ml-1 bg-white dark:bg-slate-800 border border-neutral-300 dark:border-slate-700 rounded shadow-xl py-1 text-sm min-w-48">
+        <div class="absolute z-50 top-0 left-full ml-0.5 bg-neutral-50 dark:bg-slate-900 border border-neutral-300 dark:border-slate-700 rounded shadow-xl py-1 text-sm min-w-48">
           
           <div class="px-2 py-1 border-b border-neutral-200 dark:border-slate-700 mb-1">
-            <!-- svelte-ignore a11y_autofocus -->
             <input 
               bind:value={headerMenu.filterSearchTerm}
-              class="w-full text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 dark:placeholder:text-neutral-200 focus:outline-none text-xs"
+              class="w-full text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400! dark:placeholder:text-neutral-400! focus:outline-none text-xs"
               placeholder="Search values..."
               onclick={(e) => e.stopPropagation()}
               onkeydown={(e) => {
@@ -373,7 +383,6 @@
                   headerMenu.close();
                 }
               }}
-              autofocus 
             />
           </div>
 
@@ -408,8 +417,7 @@
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
-    class="fixed z-[60] bg-white dark:bg-slate-800 border border-neutral-300 
-    dark:border-slate-700 rounded shadow-xl py-1 text-sm text-neutral-900 dark:text-neutral-100 min-w-32 cursor-default text-left flex flex-col"
+    class="fixed z-[60] bg-neutral-50 dark:bg-slate-900 border border-neutral-300 dark:border-slate-700 rounded shadow-xl py-1 text-sm text-neutral-900 dark:text-neutral-100 min-w-32 cursor-default text-left flex flex-col"
     style="top: {contextMenu.y}px; left: {contextMenu.x}px;"
     onclick={(e) => e.stopPropagation()}
   >
