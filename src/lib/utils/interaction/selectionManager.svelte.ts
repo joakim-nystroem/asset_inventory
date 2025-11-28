@@ -44,10 +44,22 @@ export class SelectionManager {
     if (e.shiftKey && this.start.row !== -1) {
       this.end = { row, col };
     } 
-    // Normal Click: Reset Anchor
+    // Normal Click: Check if clicking the same single cell to deselect
     else {
-      this.start = { row, col };
-      this.end = { row, col };
+      const isSingleCellSelected = this.start.row === this.end.row && 
+                                    this.start.col === this.end.col &&
+                                    this.start.row !== -1;
+      
+      const clickingSameCell = this.start.row === row && this.start.col === col;
+      
+      if (isSingleCellSelected && clickingSameCell) {
+        // Deselect
+        this.reset();
+      } else {
+        // Normal selection
+        this.start = { row, col };
+        this.end = { row, col };
+      }
     }
   }
 
