@@ -1,3 +1,4 @@
+// src/lib/utils/interaction/interactionHandler.ts
 import type { SelectionManager } from './selectionManager.svelte';
 import type { ColumnWidthManager } from '../core/columnManager.svelte';
 import type { ContextMenuState } from '../ui/contextMenu.svelte';
@@ -10,7 +11,9 @@ export type InteractionCallbacks = {
   onPaste: () => void | Promise<void>;
   onUndo: () => void;
   onRedo: () => void;
+  onEdit: () => void;
   onEscape: () => void;
+  onWindowClick: (e: MouseEvent) => void; // [Added]
   onScrollIntoView: (row: number, col: number) => void;
   getGridSize: () => { rows: number; cols: number };
 };
@@ -37,6 +40,13 @@ export function createInteractionHandler(
     // Escape - Clear everything
     if (e.key === 'Escape') {
       callbacks.onEscape();
+      return;
+    }
+
+    // Enter - Start Edit Mode
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      callbacks.onEdit();
       return;
     }
 
@@ -141,6 +151,9 @@ export function createInteractionHandler(
         state.contextMenu.close();
     }
     state.headerMenu.handleOutsideClick(e);
+    
+    // [Added] Propagate click to page for editor handling
+    callbacks.onWindowClick(e);
   }
 
   function handleWindowMouseMove(e: MouseEvent) {
