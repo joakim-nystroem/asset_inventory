@@ -399,10 +399,10 @@
                 onmouseenter={() => !isEditingThisCell && selection.extendSelection(actualIndex, j)}
                 oncontextmenu={(e) => !isEditingThisCell && handleContextMenu(e, i, j)}
                 class="
-                  h-full px-2 flex items-center text-xs
+                  h-full flex items-center text-xs
                   text-neutral-700 dark:text-neutral-200 
                   border-r border-neutral-200 dark:border-slate-700 last:border-r-0
-                  {isEditingThisCell ? '' : 'cursor-cell hover:bg-blue-100 dark:hover:bg-slate-600'}
+                  {isEditingThisCell ? '' : 'px-2 cursor-cell hover:bg-blue-100 dark:hover:bg-slate-600'}
                 "
                 style="width: {columnManager.getWidth(key)}px; min-width: {columnManager.getWidth(key)}px;"
               >
@@ -440,7 +440,7 @@
                         saveEdit();
                       }
                     }}
-                    class="w-full h-full resize-none bg-white dark:bg-slate-700 text-neutral-900 dark:text-neutral-100 border-2 border-blue-500 rounded px-1 py-1 focus:outline-none"
+                    class="w-full h-full resize-none bg-white dark:bg-slate-700 text-neutral-900 dark:text-neutral-100 border-2 border-blue-500 rounded px-1.5 py-1.5 focus:outline-none"
                     style="overflow: hidden;"
                   ></textarea>
                 {:else}
