@@ -1,6 +1,7 @@
 <script lang="ts">
   // --- UTILS IMPORTS ---
   import { createInteractionHandler } from '$lib/utils/interaction/interactionHandler';
+  
   // --- STATE CLASSES ---
   import { ContextMenuState } from '$lib/utils/ui/contextMenu.svelte';
   import { HistoryManager } from '$lib/utils/interaction/historyManager.svelte';
@@ -11,7 +12,8 @@
   import { SortManager } from '$lib/utils/data/sortManager.svelte';
   import { VirtualScrollManager } from '$lib/utils/core/virtualScrollManager.svelte';
   import { ColumnWidthManager } from '$lib/utils/core/columnManager.svelte';
-  import { EditingManager } from '$lib/utils/data/editingManager.svelte';
+  import { RowHeightManager } from '$lib/utils/core/rowManager.svelte';
+  import { EditManager } from '$lib/utils/interaction/editManager.svelte';
 
   // Initialize State Classes
   const contextMenu = new ContextMenuState();
@@ -23,18 +25,22 @@
   const sort = new SortManager();
   const virtualScroll = new VirtualScrollManager();
   const columnManager = new ColumnWidthManager();
-  const editing = new EditingManager();
+  const rowManager = new RowHeightManager();
+  const editManager = new EditManager();
 
   let { data } = $props();
+
   // --- Data State ---
   let assets: Record<string, any>[] = $state(data.assets);
   let locations: Record<string, any>[] = $state(data.locations || []);
   let keys: string[] = data.assets.length > 0 ? Object.keys(data.assets[0]) : [];
   
   let scrollContainer: HTMLDivElement | null = $state(null);
+  let textareaRef: HTMLTextAreaElement | null = $state(null);
+
   // Get visible items for rendering
   const visibleData = $derived(virtualScroll.getVisibleItems(assets));
-  
+
   // --- Computed Overlays ---
   const selectionOverlay = $derived(
     selection.computeVisualOverlay(
@@ -42,7 +48,8 @@
       selection.end,
       virtualScroll.visibleRange,
       keys,
-      columnManager
+      columnManager,
+      virtualScroll.rowHeight
     )
   );
 
@@ -52,24 +59,10 @@
       selection.copyEnd,
       virtualScroll.visibleRange,
       keys,
-      columnManager
+      columnManager,
+      virtualScroll.rowHeight
     ) : null
   );
-
-  // Editor Overlay Logic
-  const editorOverlay = $derived.by(() => {
-    if (!editing.active || editing.row === -1) return null;
-
-    const overlay = selection.computeVisualOverlay(
-      { row: editing.row, col: editing.col },
-      { row: editing.row, col: editing.col },
-      virtualScroll.visibleRange,
-      keys,
-      columnManager
-    );
-
-    return overlay;
-  });
 
   // --- Interaction Handler (Keyboard & Mouse) ---
   const mountInteraction = createInteractionHandler(
@@ -87,92 +80,24 @@
       onPaste: handlePaste,
       onUndo: () => history.undo(assets),
       onRedo: () => history.redo(assets),
-      onEdit: () => initEditor(),
       onEscape: () => {
-        if (editing.active) {
-            editing.close();
-            scrollContainer?.focus();
-            return;
+        // Cancel edit if active
+        if (editManager.isEditing) {
+          editManager.cancel(columnManager, rowManager);
+          return;
         }
+        
         selection.resetAll();
         clipboard.clear();
         if (contextMenu.visible) contextMenu.close();
         headerMenu.close();
       },
-      onWindowClick: (e: MouseEvent) => {
-        // [Added] Click outside to save editor
-        if (editing.active) {
-          const target = e.target as HTMLElement;
-          // If the click is NOT on the textarea, save and close
-          if (target.tagName !== 'TEXTAREA') {
-            saveEditor();
-          }
-        }
-      },
       onScrollIntoView: (row, col) => {
-        virtualScroll.ensureVisible(row, col, scrollContainer, keys, columnManager);
+        virtualScroll.ensureVisible(row, col, scrollContainer, keys, columnManager, rowManager);
       },
       getGridSize: () => ({ rows: assets.length, cols: keys.length })
     }
   );
-
-  // --- Editor Logic ---
-  
-  function initEditor() {
-    const target = getActionTarget();
-    if (!target) return;
-
-    if (editing.isOpen(target.row, target.col)) return;
-
-    if (contextMenu.visible) contextMenu.close();
-    
-    const key = keys[target.col];
-    const item = assets[target.row];
-    editing.start(target.row, target.col, key, item[key]);
-  }
-
-  function saveEditor() {
-    if (!editing.active) return;
-
-    const { row, col, key, value } = editing.save();
-    
-    const asset = assets[row];
-    const oldValue = String(asset[key] ?? '');
-    
-    if (oldValue !== value) {
-        history.record(asset.id, key, oldValue, value);
-        asset[key] = value;
-    }
-    
-    scrollContainer?.focus();
-  }
-
-  // --- Auto-size Logic for Textarea ---
-  function autoSize(el: HTMLTextAreaElement) {
-    // 1. Reset dimensions to measure natural size
-    el.style.width = 'auto';
-    el.style.height = 'auto';
-    el.style.whiteSpace = 'nowrap'; // Start with single line
-
-    // 2. Base width is the column width
-    const minWidth = columnManager.getWidth(editing.key);
-    const MAX_WIDTH = 300;
-
-    // 3. Measure content width
-    // scrollWidth includes padding, so it's a good proxy for "content + buffer"
-    let calculatedWidth = Math.max(minWidth, el.scrollWidth);
-
-    if (calculatedWidth > MAX_WIDTH) {
-        // CASE: Text is long. Clamp width, enable wrap, expand height.
-        el.style.width = `${MAX_WIDTH}px`;
-        el.style.whiteSpace = 'pre-wrap'; 
-        el.style.height = `${el.scrollHeight}px`; // Expand height to fit wrapped text
-    } else {
-        // CASE: Text fits within 300px. Expand width only.
-        el.style.width = `${calculatedWidth}px`;
-        el.style.height = `${el.scrollHeight}px`; // Should be single line height
-    }
-  }
 
   // --- Search Logic ---
   async function handleSearch() {
@@ -218,6 +143,7 @@
     const pasteSize = await clipboard.paste(target, assets, keys, history);
     
     if (contextMenu.visible) contextMenu.close();
+
     if (pasteSize) {
       const startRow = target.row;
       const startCol = target.col;
@@ -230,9 +156,55 @@
     }
   }
 
-  function handleEditAction() { 
-    initEditor();
+  // --- Edit Logic ---
+  function handleEditAction() {
+    const target = getActionTarget();
+    if (!target) return;
+
+    const { row, col } = target;
+    const key = keys[col];
+    const asset = assets[row];
+    
+    if (!asset || !key) return;
+
+    const currentValue = String(asset[key] ?? '');
+    
+    // Start edit mode
+    editManager.startEdit(row, col, key, currentValue, columnManager, rowManager);
+    
+    contextMenu.close();
+    selection.reset();
   }
+
+  async function saveEdit() {
+    const saved = await editManager.save(
+      assets,
+      (id, key, oldValue, newValue) => history.record(id, key, oldValue, newValue),
+      columnManager,
+      rowManager
+    );
+    
+    if (saved) {
+      // Optionally: Call API to persist to database
+      // await persistToDatabase(editState);
+    }
+  }
+
+  function cancelEdit() {
+    editManager.cancel(columnManager, rowManager);
+  }
+
+  // --- Textarea Auto-resize Effect ---
+  $effect(() => {
+    if (editManager.isEditing && textareaRef) {
+      // Update row height based on textarea content
+      editManager.updateRowHeight(textareaRef, rowManager, columnManager);
+      
+      // Focus the textarea
+      textareaRef.focus();
+      textareaRef.select();
+    }
+  });
 
   // --- Lifecycle & Window Events ---
   
@@ -268,8 +240,10 @@
     search.cleanupFilterCache();
     sort.invalidateCache();
   });
+
 </script>
 
+<!-- Header / Filter UI -->
 <div class="flex flex-row gap-4 items-center mb-2">
   <h2 class="text-lg font-bold whitespace-nowrap">Asset Master</h2>
   <div class="flex gap-4 items-center">
@@ -284,7 +258,6 @@
       class="cursor-pointer bg-blue-500 hover:bg-blue-600 px-2 py-1 text-neutral-100">Search</button
     >
   </div>
-  
   <div class="flex flex-row w-full justify-between items-center">
     <div class="flex flex-row text-xs gap-2">
       {#each search.selectedFilters as filter} 
@@ -304,6 +277,7 @@
   </div>
 </div>
 
+<!-- Main Grid -->
 {#if assets.length > 0}
   <div 
     bind:this={scrollContainer}
@@ -311,15 +285,15 @@
     class="rounded-lg border border-neutral-200 dark:border-slate-700 bg-white dark:bg-slate-800 overflow-auto h-[calc(100dvh-8.8rem)] shadow-md relative select-none focus:outline-none"
     tabindex="-1"
   >
-    <div class="w-max min-w-full bg-white dark:bg-slate-800 text-leftkz relative" style="height: {virtualScroll.getTotalHeight(assets.length) + 32}px;">
+    <div class="w-max min-w-full bg-white dark:bg-slate-800 text-leftkz relative" style="height: {virtualScroll.getTotalHeight(assets.length, rowManager) + 32}px;">
       
+      <!-- Header Row -->
       <div class="sticky top-0 z-20 flex border-b border-neutral-200 dark:border-slate-600 bg-neutral-50 dark:bg-slate-700">
         {#each keys as key, i}
           <div 
             data-header-col={i}
             class="header-interactive relative group border-r border-neutral-200 dark:border-slate-600 last:border-r-0"
-            style="width: {columnManager.getWidth(key)}px;
-                   min-width: {columnManager.getWidth(key)}px;"
+            style="width: {columnManager.getWidth(key)}px; min-width: {columnManager.getWidth(key)}px;"
           >
             <button
               class="w-full h-full px-2 py-2 text-xs font-medium text-neutral-900 dark:text-neutral-100 uppercase hover:bg-neutral-100 dark:hover:bg-slate-600 text-left flex items-center justify-between focus:outline-none focus:bg-neutral-200 dark:focus:bg-slate-500 cursor-pointer"
@@ -335,6 +309,7 @@
               </span>
             </button>
 
+            <!-- Column Resizer -->
             <!-- svelte-ignore a11y_click_events_have_key_events -->
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div 
@@ -355,8 +330,10 @@
         {/each}
       </div>
 
-      <div class="absolute top-8 w-full" style="transform: translateY({virtualScroll.getOffsetY()}px);">
+      <!-- Body Rows -->
+      <div class="absolute top-8 w-full" style="transform: translateY({virtualScroll.getOffsetY(rowManager)}px);">
         
+        <!-- Copy Overlay (Dashed) -->
         {#if copyOverlay}
             <div
              class="absolute pointer-events-none z-20 border-blue-600 dark:border-blue-500"
@@ -374,6 +351,7 @@
             ></div>
         {/if}
 
+        <!-- Selection Overlay (Solid) -->
         {#if selectionOverlay}
             <div
             class="absolute pointer-events-none z-10 border-blue-600 dark:border-blue-500 bg-blue-900/10"
@@ -391,67 +369,86 @@
             ></div>
         {/if}
 
-        {#if editorOverlay && editing.active}
-             <!-- svelte-ignore a11y_autofocus -->
-             <textarea
-                value={editing.value}
-                oninput={(e) => {
-                    editing.value = e.currentTarget.value;
-                    autoSize(e.currentTarget);
-                }}
-                onkeydown={(e) => {
-                    e.stopPropagation(); // Don't trigger grid nav
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault();
-                        saveEditor();
-                    }
-                    if (e.key === 'Escape') {
-                        e.preventDefault();
-                        editing.close();
-                        scrollContainer?.focus();
-                    }
-                }}
-                use:autoSize
-                autofocus
-                class="absolute z-50 bg-white dark:bg-slate-700 text-neutral-900 dark:text-neutral-100 text-xs border-2 border-blue-600 px-2 py-1.5 resize-none overflow-hidden shadow-xl leading-none"
-                style="
-                    top: {editorOverlay.top}px;
-                    left: {editorOverlay.left}px;
-                    min-width: {editorOverlay.width}px;
-                    min-height: {editorOverlay.height}px;
-                "
-             ></textarea>
-        {/if}
-
+        <!-- Data Items -->
         {#each visibleData.items as asset, i (asset.id || (visibleData.startIndex + i))}
           {@const actualIndex = visibleData.startIndex + i}
-          <div class="flex h-8 border-b border-neutral-200 dark:border-slate-700 hover:bg-blue-50 dark:hover:bg-slate-700">
+          {@const rowHeight = rowManager.getHeight(actualIndex)}
+          
+          <div class="flex border-b border-neutral-200 dark:border-slate-700 hover:bg-blue-50 dark:hover:bg-slate-700" style="height: {rowHeight}px;">
             {#each keys as key, j} 
+              {@const isEditingThisCell = editManager.isEditingCell(actualIndex, j)}
+              
               <!-- svelte-ignore a11y_no_static_element_interactions -->
               <div
                 data-row={actualIndex}
                 data-col={j} 
                 onmousedown={(e) => {
-                    if (editing.active) return;
-                    selection.handleMouseDown(actualIndex, j, e)
+                  if (isEditingThisCell) return;
+                  
+                  // If we're editing a different cell, cancel it first
+                  if (editManager.isEditing) {
+                    editManager.cancel(columnManager, rowManager);
+                    // Wait for Svelte to re-render with reset height, then select
+                    setTimeout(() => {
+                      selection.handleMouseDown(actualIndex, j, e);
+                    }, 0);
+                  } else {
+                    selection.handleMouseDown(actualIndex, j, e);
+                  }
                 }}
-                onmouseenter={() => {
-                     if (editing.active) return;
-                     selection.extendSelection(actualIndex, j)
-                }}
-                oncontextmenu={(e) => handleContextMenu(e, i, j)}
+                onmouseenter={() => !isEditingThisCell && selection.extendSelection(actualIndex, j)}
+                oncontextmenu={(e) => !isEditingThisCell && handleContextMenu(e, i, j)}
                 class="
-                  h-full px-2 flex items-center text-xs cursor-cell
+                  h-full px-2 flex items-center text-xs
                   text-neutral-700 dark:text-neutral-200 
-                  hover:bg-blue-100 dark:hover:bg-slate-600
                   border-r border-neutral-200 dark:border-slate-700 last:border-r-0
+                  {isEditingThisCell ? '' : 'cursor-cell hover:bg-blue-100 dark:hover:bg-slate-600'}
                 "
-                style="width: {columnManager.getWidth(key)}px;
-                       min-width: {columnManager.getWidth(key)}px;"
+                style="width: {columnManager.getWidth(key)}px; min-width: {columnManager.getWidth(key)}px;"
               >
-                <span class="truncate w-full">
-                  {asset[key]}
-                </span>
+                {#if isEditingThisCell}
+                  <!-- Edit Mode: Textarea -->
+                  <textarea
+                    bind:this={textareaRef}
+                    bind:value={editManager.inputValue}
+                    oninput={() => editManager.updateRowHeight(textareaRef, rowManager, columnManager)}
+                    onkeydown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        saveEdit();
+                      } else if (e.key === 'Escape') {
+                        e.preventDefault();
+                        cancelEdit();
+                      }
+                    }}
+                    onmousedown={(e) => {
+                      // Prevent triggering selection on the cell when clicking textarea
+                      e.stopPropagation();
+                    }}
+                    onblur={(e) => {
+                      // Check if we're clicking on another cell
+                      const relatedTarget = e.relatedTarget as HTMLElement;
+                      
+                      // If clicking on a data cell or anywhere in the grid, cancel and let click handle it
+                      if (!relatedTarget || relatedTarget.closest('[data-row]')) {
+                        // Use setTimeout to ensure row height resets before selection calculates
+                        setTimeout(() => {
+                          cancelEdit();
+                        }, 0);
+                      } else {
+                        // Clicking outside the grid (like a button), save normally
+                        saveEdit();
+                      }
+                    }}
+                    class="w-full h-full resize-none bg-white dark:bg-slate-700 text-neutral-900 dark:text-neutral-100 border-2 border-blue-500 rounded px-1 py-1 focus:outline-none"
+                    style="overflow: hidden;"
+                  ></textarea>
+                {:else}
+                  <!-- Normal Mode: Display Text -->
+                  <span class="truncate w-full">
+                    {asset[key]}
+                  </span>
+                {/if}
               </div>
             {/each}
           </div>
@@ -466,13 +463,13 @@
   <p>Query successful, but no data was returned.</p>
 {/if}
 
+<!-- Popups (Header Menu & Context Menu) -->
 {#if headerMenu.activeKey}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div 
     class="fixed z-50 bg-neutral-50 dark:bg-slate-900 border border-neutral-300 dark:border-slate-700 rounded shadow-xl py-1 text-sm text-neutral-900 dark:text-neutral-100 min-w-48 font-normal normal-case cursor-default text-left flex flex-col"
-    style="top: {headerMenu.y}px;
-           left: {headerMenu.x}px;" 
+    style="top: {headerMenu.y}px; left: {headerMenu.x}px;" 
     onclick={(e) => e.stopPropagation()}
   >
     <button 
@@ -515,8 +512,7 @@
           <div class="px-2 py-1 border-b border-neutral-200 dark:border-slate-700 mb-1">
             <input 
               bind:value={headerMenu.filterSearchTerm}
-              class="w-full pl-2 text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400!
-                     dark:placeholder:text-neutral-300! focus:outline-none text-xs"
+              class="w-full pl-2 text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400! dark:placeholder:text-neutral-300! focus:outline-none text-xs"
               placeholder="Search values..."
               onclick={(e) => e.stopPropagation()}
               onkeydown={(e) => {
@@ -530,18 +526,17 @@
 
           <div class="max-h-48 overflow-y-auto no-scrollbar">
              {#each search.getFilterItems(headerMenu.activeKey, assets)
-               .filter(i => i.toLowerCase().includes(headerMenu.filterSearchTerm.toLowerCase())) 
+                .filter(i => i.toLowerCase().includes(headerMenu.filterSearchTerm.toLowerCase())) 
                 as item
              }
               <button 
                 class="px-3 py-1.5 hover:bg-blue-50 dark:hover:bg-slate-700 text-left flex items-center gap-2 group w-full" 
                 onclick={() => { 
-                   search.selectFilterItem(item, headerMenu.activeKey, assets);
-                  // headerMenu.close(); 
+                  search.selectFilterItem(item, headerMenu.activeKey, assets);
                 }}
               >
                 <div class="w-4 flex justify-center text-blue-600 dark:text-blue-400 font-bold">
-                   {#if search.isFilterSelected(headerMenu.activeKey, item)}✓{/if}
+                  {#if search.isFilterSelected(headerMenu.activeKey, item)}✓{/if}
                 </div>
                 <div class="truncate">{item}</div>
               </button>
@@ -560,8 +555,7 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="fixed z-[60] bg-neutral-50 dark:bg-slate-900 border border-neutral-300 dark:border-slate-700 rounded shadow-xl py-1 text-sm text-neutral-900 dark:text-neutral-100 min-w-32 cursor-default text-left flex flex-col"
-    style="top: {contextMenu.y}px;
-           left: {contextMenu.x}px;"
+    style="top: {contextMenu.y}px; left: {contextMenu.x}px;"
     onclick={(e) => e.stopPropagation()}
   >
     <button class="px-3 py-1.5 hover:bg-blue-50 dark:hover:bg-slate-700 text-left flex items-center gap-2 group" onclick={handleEditAction}>
@@ -578,10 +572,8 @@
     </button>
     
     <button class="px-3 py-1.5 hover:bg-blue-50 dark:hover:bg-slate-700 text-left flex items-center gap-2 group" onclick={handlePaste}>
-      <svg class="w-4 h-4 text-neutral-500 dark:text-neutral-400 group-hover:text-blue-600 dark:group-hover:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" 
-        stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 
-        0 00-2 2v12a2 2 0 002 2h10a2 2 
-        0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path></svg>
+      <svg class="w-4 h-4 text-neutral-500 dark:text-neutral-400 group-hover:text-blue-600 dark:group-hover:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 
+        0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path></svg>
       <span>Paste</span>
     </button>
   </div>

@@ -1,10 +1,11 @@
-// $lib/utils/virtualScrollManager.svelte.ts
+// $lib/utils/core/virtualScrollManager.svelte.ts
 
 import type { ColumnWidthManager } from './columnManager.svelte';
+import type { RowHeightManager } from './rowManager.svelte';
 
 export class VirtualScrollManager {
   // Configuration
-  rowHeight = 32; // Height of each row in pixels (h-8 = 2rem = 32px)
+  rowHeight = 32; // Default height of each row (h-8 = 2rem = 32px)
   overscan = 15; // Extra rows to render above/below viewport for smooth scrolling
   
   // State
@@ -36,16 +37,24 @@ export class VirtualScrollManager {
   
   /**
    * Calculate total height of all rows (for scrollbar)
+   * Now accounts for custom row heights
    */
-  getTotalHeight(itemCount: number): number {
-    return itemCount * this.rowHeight;
+  getTotalHeight(itemCount: number, RowHeightManager?: RowHeightManager): number {
+    if (!RowHeightManager) {
+      return itemCount * this.rowHeight;
+    }
+    return RowHeightManager.getTotalHeight(itemCount);
   }
   
   /**
    * Calculate offset for the visible window
+   * Now accounts for custom row heights before the visible range
    */
-  getOffsetY(): number {
-    return this.visibleRange.startIndex * this.rowHeight;
+  getOffsetY(RowHeightManager?: RowHeightManager): number {
+    if (!RowHeightManager) {
+      return this.visibleRange.startIndex * this.rowHeight;
+    }
+    return RowHeightManager.getOffsetY(this.visibleRange.startIndex);
   }
   
   /**
@@ -65,11 +74,19 @@ export class VirtualScrollManager {
   
   /**
    * Scroll to a specific row index
+   * Now accounts for custom row heights
    */
-  scrollToRow(index: number, container: HTMLElement | null) {
+  scrollToRow(index: number, container: HTMLElement | null, RowHeightManager?: RowHeightManager) {
     if (!container) return;
     
-    const targetScrollTop = index * this.rowHeight;
+    let targetScrollTop: number;
+    
+    if (!RowHeightManager) {
+      targetScrollTop = index * this.rowHeight;
+    } else {
+      targetScrollTop = RowHeightManager.getOffsetY(index);
+    }
+    
     container.scrollTop = targetScrollTop;
     this.scrollTop = targetScrollTop;
   }
@@ -91,22 +108,31 @@ export class VirtualScrollManager {
 
   /**
    * Smartly scroll container so the target cell (row + col) is visible.
+   * Now accounts for custom row heights
    */
   ensureVisible(
     rowIndex: number, 
     colIndex: number,
     container: HTMLElement | null,
     keys: string[],
-    columnManager: ColumnWidthManager
+    columnManager: ColumnWidthManager,
+    RowHeightManager?: RowHeightManager
   ) {
     if (!container) return;
 
     // --- Vertical Scrolling ---
     const headerHeight = 32; // Matches h-8 header
 
-    // 1. Calculate the Visual Position of the row (accounting for top-8 offset)
-    const rowVisualTop = (rowIndex * this.rowHeight) + headerHeight;
-    const rowVisualBottom = rowVisualTop + this.rowHeight;
+    // 1. Calculate the Visual Position of the row
+    let rowVisualTop: number;
+    if (!RowHeightManager) {
+      rowVisualTop = (rowIndex * this.rowHeight) + headerHeight;
+    } else {
+      rowVisualTop = RowHeightManager.getOffsetY(rowIndex) + headerHeight;
+    }
+    
+    const rowHeight = RowHeightManager?.getHeight(rowIndex) ?? this.rowHeight;
+    const rowVisualBottom = rowVisualTop + rowHeight;
 
     // 2. Calculate the Viewport boundaries
     const viewTop = container.scrollTop + headerHeight;
@@ -144,7 +170,6 @@ export class VirtualScrollManager {
         container.scrollLeft = cellLeft;
     } else if (cellRight > viewRight) {
         // Target is hidden to the RIGHT -> Scroll Right
-        // We subtract clientWidth to align the right edge, optionally adding a small buffer
         container.scrollLeft = cellRight - container.clientWidth; 
     }
   }
